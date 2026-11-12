@@ -191,6 +191,7 @@ export function service(base?: string) {
             userId: string,
             alias?: string,
             callbackUrl?: string,
+            forceNew?: boolean,
             s?: AbortSignal
         ) =>
             request(
@@ -199,6 +200,7 @@ export function service(base?: string) {
                     user_id: userId,
                     ...(alias ? { alias } : {}),
                     ...(callbackUrl ? { callback_url: callbackUrl } : {}),
+                    force_new: !!forceNew,
                 },
                 s
             ),
@@ -210,9 +212,9 @@ export function service(base?: string) {
                 s
             ),
 
-        listConnections: (userId: string, s?: AbortSignal) =>
+        listConnections: (userId: string, toolkitSlug?: string, s?: AbortSignal) =>
             request(
-                "/connections?user_id=" + encodeURIComponent(userId),
+                "/connections?user_id=" + encodeURIComponent(userId) + (toolkitSlug ? "&toolkit_slug=" + encodeURIComponent(toolkitSlug) : ""),
                 undefined,
                 s
             ),

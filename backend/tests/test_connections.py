@@ -401,16 +401,7 @@ class TestComposioConnections(unittest.TestCase):
                 if "/connected_accounts?user_ids=usr_asgi_test" in str(req.url):
                     return httpx.Response(
                         200,
-                        json={
-                            "items": [
-                                {
-                                    "id": "ca_asgi_01",
-                                    "user_id": "usr_asgi_test",
-                                    "toolkit": {"slug": "slack"},
-                                    "status": "ACTIVE",
-                                }
-                            ]
-                        },
+                        json={"items": []},
                     )
                 return httpx.Response(404)
 
@@ -418,7 +409,7 @@ class TestComposioConnections(unittest.TestCase):
 
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-                # 1. Start connection
+                # 1. Start connection (new connection created)
                 res_start = await client.post(
                     "/api/v1/connections/slack/start",
                     json={"user_id": "usr_asgi_test", "alias": "My Slack"},
@@ -427,6 +418,7 @@ class TestComposioConnections(unittest.TestCase):
                 data_start = res_start.json()
                 self.assertEqual(data_start["connected_account_id"], "ca_asgi_01")
                 self.assertEqual(data_start["redirect_url"], "https://connect.composio.dev/link/lk_asgi")
+                self.assertEqual(data_start["status"], "INITIATED")
 
                 # 2. Get connection status
                 res_get = await client.get(
@@ -444,7 +436,7 @@ class TestComposioConnections(unittest.TestCase):
                 )
                 self.assertEqual(res_list.status_code, 200)
                 data_list = res_list.json()
-                self.assertEqual(len(data_list["items"]), 1)
+                self.assertIsInstance(data_list["items"], list)
 
                 # 4. Shopify status check
                 res_shop = await client.get("/api/v1/connections/shopify/status")
@@ -453,6 +445,179 @@ class TestComposioConnections(unittest.TestCase):
                 self.assertIn("Shopify requires Custom OAuth", data_shop["setup_instructions"])
 
         self.run_async(_test())
+
+    # -------------------------------------------------------------------------
+    # 6. Specific OAuth Lifecycle & Duplicate Alias Regression Tests
+    # -------------------------------------------------------------------------
+    def test_16_regression_connect_gmail_successfully(self):
+        """Regression 1: Connect Gmail successfully returns Connect Link."""
+        def handler(req: httpx.Request):
+            if req.url.path.endswith("/auth_configs"):
+                return httpx.Response(200, json={"items": [{"id": "ac_gmail_1", "status": "ENABLED", "is_composio_managed": True, "toolkit": {"slug": "gmail"}}]})
+            if req.url.path.endswith("/connected_accounts/link"):
+                return httpx.Response(201, json={"redirect_url": "https://connect.composio.dev/link/lk_gmail", "connected_account_id": "ca_gmail_100", "expires_at": "2026-11-13T12:00:00Z"})
+            if "connected_accounts" in req.url.path:
+                return httpx.Response(200, json={"items": []})
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        service = ComposioConnectionService(client=client)
+        res = self.run_async(service.create_connection_link(toolkit_slug="gmail", user_id="usr_stable_user_1"))
+        self.assertEqual(res.status, "INITIATED")
+        self.assertEqual(res.connected_account_id, "ca_gmail_100")
+        self.assertEqual(res.redirect_url, "https://connect.composio.dev/link/lk_gmail")
+        self.assertFalse(res.already_active)
+
+    def test_17_regression_connect_slack_with_same_user_id_no_alias_collision(self):
+        """Regression 2: Connect Slack using the same user ID does not collide with Gmail alias."""
+        seen_aliases = []
+        def handler(req: httpx.Request):
+            import json
+            if req.url.path.endswith("/auth_configs"):
+                return httpx.Response(200, json={"items": [{"id": "ac_slack_1", "status": "ENABLED", "is_composio_managed": True, "toolkit": {"slug": "slack"}}]})
+            if req.url.path.endswith("/connected_accounts/link"):
+                body = json.loads(req.content.decode())
+                seen_aliases.append(body.get("alias"))
+                return httpx.Response(201, json={"redirect_url": "https://connect.composio.dev/link/lk_slack", "connected_account_id": "ca_slack_200", "expires_at": "2026-11-13T12:00:00Z"})
+            if "connected_accounts" in req.url.path:
+                # Simulates existing Gmail account with older alias
+                return httpx.Response(200, json={"items": [{"id": "ca_gmail_100", "toolkit": {"slug": "gmail"}, "status": "ACTIVE", "user_id": "usr_stable_user_1", "alias": "Session usr_stab"}]})
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        service = ComposioConnectionService(client=client)
+        # Even if frontend sent older "Session ..." alias, service replaces or sanitizes it
+        res = self.run_async(service.create_connection_link(toolkit_slug="slack", user_id="usr_stable_user_1", alias="Session usr_stab"))
+        self.assertEqual(res.status, "INITIATED")
+        self.assertEqual(res.connected_account_id, "ca_slack_200")
+        # Ensure alias sent to Composio was unique and NOT "Session usr_stab"
+        self.assertEqual(len(seen_aliases), 1)
+        self.assertNotEqual(seen_aliases[0], "Session usr_stab")
+        self.assertTrue(seen_aliases[0].startswith("slack_"))
+
+    def test_18_regression_connect_gmail_again_detects_existing_active(self):
+        """Regression 3: Connecting Gmail again detects existing ACTIVE connection, preventing duplicate."""
+        link_called = []
+        def handler(req: httpx.Request):
+            if req.url.path.endswith("/connected_accounts/link"):
+                link_called.append(True)
+                return httpx.Response(201, json={})
+            if "connected_accounts" in req.url.path:
+                return httpx.Response(200, json={"items": [
+                    {"id": "ca_gmail_active_99", "toolkit": {"slug": "gmail"}, "status": "ACTIVE", "user_id": "usr_stable_user_1", "alias": "gmail_alias_1"}
+                ]})
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        service = ComposioConnectionService(client=client)
+        res = self.run_async(service.create_connection_link(toolkit_slug="gmail", user_id="usr_stable_user_1", force_new=False))
+        self.assertTrue(res.already_active)
+        self.assertEqual(res.status, "ACTIVE")
+        self.assertEqual(res.connected_account_id, "ca_gmail_active_99")
+        self.assertIsNone(res.redirect_url)
+        # Link endpoint was NOT called
+        self.assertEqual(len(link_called), 0)
+
+    def test_19_regression_reconnect_slack_after_earlier_failure(self):
+        """Regression 4: Reconnecting Slack after earlier failure with force_new=True generates fresh link."""
+        link_created = []
+        def handler(req: httpx.Request):
+            if req.url.path.endswith("/auth_configs"):
+                return httpx.Response(200, json={"items": [{"id": "ac_slack_1", "status": "ENABLED", "is_composio_managed": True, "toolkit": {"slug": "slack"}}]})
+            if req.url.path.endswith("/connected_accounts/link"):
+                link_created.append(True)
+                return httpx.Response(201, json={"redirect_url": "https://connect.composio.dev/link/lk_fresh_slack", "connected_account_id": "ca_slack_fresh", "expires_at": "2026-11-13T12:00:00Z"})
+            if "connected_accounts" in req.url.path:
+                return httpx.Response(200, json={"items": [
+                    {"id": "ca_slack_failed_old", "toolkit": {"slug": "slack"}, "status": "FAILED", "status_reason": "App unauthorized", "user_id": "usr_stable_user_1"}
+                ]})
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        service = ComposioConnectionService(client=client)
+        res = self.run_async(service.create_connection_link(toolkit_slug="slack", user_id="usr_stable_user_1", force_new=True))
+        self.assertEqual(res.status, "INITIATED")
+        self.assertEqual(res.connected_account_id, "ca_slack_fresh")
+        self.assertEqual(res.redirect_url, "https://connect.composio.dev/link/lk_fresh_slack")
+        self.assertTrue(len(link_created) == 1)
+
+    def test_20_regression_retry_after_expired_connect_link(self):
+        """Regression 5: Retrying after an expired Connect Link succeeds with new link."""
+        def handler(req: httpx.Request):
+            if req.url.path.endswith("/auth_configs"):
+                return httpx.Response(200, json={"items": [{"id": "ac_slack_1", "status": "ENABLED", "is_composio_managed": True, "toolkit": {"slug": "slack"}}]})
+            if req.url.path.endswith("/connected_accounts/link"):
+                return httpx.Response(201, json={"redirect_url": "https://connect.composio.dev/link/lk_renewed", "connected_account_id": "ca_slack_renewed", "expires_at": "2026-11-13T12:00:00Z"})
+            if "connected_accounts" in req.url.path:
+                return httpx.Response(200, json={"items": [
+                    {"id": "ca_slack_expired", "toolkit": {"slug": "slack"}, "status": "EXPIRED", "user_id": "usr_stable_user_1"}
+                ]})
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        service = ComposioConnectionService(client=client)
+        res = self.run_async(service.create_connection_link(toolkit_slug="slack", user_id="usr_stable_user_1", force_new=False))
+        # Since status was EXPIRED (not ACTIVE), it creates a new link
+        self.assertEqual(res.status, "INITIATED")
+        self.assertEqual(res.connected_account_id, "ca_slack_renewed")
+        self.assertFalse(res.already_active)
+
+    def test_21_regression_provider_isolation_gmail_and_slack_do_not_share_status(self):
+        """Regression 6: Verifies provider isolation - Gmail active connection does not bleed into Slack."""
+        def handler(req: httpx.Request):
+            if "connected_accounts" in req.url.path:
+                return httpx.Response(200, json={"items": [
+                    {"id": "ca_gmail_act", "toolkit": {"slug": "gmail"}, "status": "ACTIVE", "user_id": "usr_iso_user", "alias": "gmail_alias"},
+                    {"id": "ca_slack_exp", "toolkit": {"slug": "slack"}, "status": "EXPIRED", "user_id": "usr_iso_user", "alias": "slack_alias"},
+                ]})
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        service = ComposioConnectionService(client=client)
+
+        # 1. Gmail active lookup
+        gmail_active = self.run_async(service.find_active_connection(user_id="usr_iso_user", toolkit_slug="gmail"))
+        self.assertIsNotNone(gmail_active)
+        self.assertEqual(gmail_active.toolkit_slug, "gmail")
+        self.assertEqual(gmail_active.id, "ca_gmail_act")
+
+        # 2. Slack active lookup returns None (even though Gmail is ACTIVE)
+        slack_active = self.run_async(service.find_active_connection(user_id="usr_iso_user", toolkit_slug="slack"))
+        self.assertIsNone(slack_active)
+
+        # 3. Filtered list by toolkit
+        gmail_list = self.run_async(service.list_user_connections(user_id="usr_iso_user", toolkit_slug="gmail"))
+        self.assertEqual(gmail_list.total_items, 1)
+        self.assertEqual(gmail_list.items[0].toolkit_slug, "gmail")
+
+        slack_list = self.run_async(service.list_user_connections(user_id="usr_iso_user", toolkit_slug="slack"))
+        self.assertEqual(slack_list.total_items, 1)
+        self.assertEqual(slack_list.items[0].toolkit_slug, "slack")
+
+    def test_22_regression_alias_collision_avoidance(self):
+        """Regression 7: Alias collision avoidance appends unique salt when requested alias already exists."""
+        requested_alias = "my_custom_alias"
+        alias_sent = []
+        def handler(req: httpx.Request):
+            import json
+            if req.url.path.endswith("/auth_configs"):
+                return httpx.Response(200, json={"items": [{"id": "ac_slack_1", "status": "ENABLED", "is_composio_managed": True, "toolkit": {"slug": "slack"}}]})
+            if req.url.path.endswith("/connected_accounts/link"):
+                body = json.loads(req.content.decode())
+                alias_sent.append(body.get("alias"))
+                return httpx.Response(201, json={"redirect_url": "https://connect.composio.dev/link/lk_test", "connected_account_id": "ca_test", "expires_at": "2026-11-13T12:00:00Z"})
+            if "connected_accounts" in req.url.path:
+                return httpx.Response(200, json={"items": [
+                    {"id": "ca_existing", "toolkit": {"slug": "slack"}, "status": "EXPIRED", "user_id": "usr_alias_user", "alias": "my_custom_alias"}
+                ]})
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        service = ComposioConnectionService(client=client)
+        res = self.run_async(service.create_connection_link(toolkit_slug="slack", user_id="usr_alias_user", alias="my_custom_alias"))
+        self.assertEqual(len(alias_sent), 1)
+        self.assertNotEqual(alias_sent[0], "my_custom_alias")
+        self.assertTrue(alias_sent[0].startswith("my_custom_alias_"))
 
 
 if __name__ == "__main__":

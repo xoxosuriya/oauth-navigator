@@ -19,6 +19,10 @@ class ConnectionStartRequest(BaseModel):
         default=None,
         description="Frontend URL to redirect the user back to after OAuth flow",
     )
+    force_new: Optional[bool] = Field(
+        default=False,
+        description="Force creating a new connection link even if an ACTIVE connection already exists",
+    )
 
     @field_validator("user_id")
     @classmethod
@@ -32,22 +36,26 @@ class ConnectionStartRequest(BaseModel):
 
 
 class ConnectionStartResponse(BaseModel):
-    redirect_url: str = Field(..., description="Composio Connect authorization link")
+    redirect_url: Optional[str] = Field(default=None, description="Composio Connect authorization link")
     connected_account_id: str = Field(..., description="Unique Composio connected account identifier")
     expires_at: Optional[str] = Field(default=None, description="ISO timestamp when the link expires")
     toolkit_slug: str = Field(..., description="Toolkit slug being connected")
     is_custom_auth: bool = Field(default=False, description="Whether connection uses custom app credentials")
+    status: str = Field(default="INITIATED", description="Lifecycle status: INITIATED or ACTIVE")
+    already_active: bool = Field(default=False, description="Whether an existing ACTIVE connection was returned")
+    alias: Optional[str] = Field(default=None, description="Resolved alias for this connection")
     message: Optional[str] = Field(default=None, description="Helpful status or next steps message")
 
 
 class ConnectedAccountResponse(BaseModel):
     id: str = Field(..., description="Unique Composio connected account identifier")
     toolkit_slug: str = Field(..., description="Toolkit slug")
-    status: str = Field(..., description="Connection lifecycle status (INITIALIZING, ACTIVE, FAILED, EXPIRED, etc.)")
+    status: str = Field(..., description="Connection lifecycle status (INITIALIZING, INITIATED, ACTIVE, FAILED, EXPIRED, CANCELLED)")
     status_reason: Optional[str] = Field(default=None, description="Detailed explanation if failed or pending")
     created_at: Optional[str] = Field(default=None, description="ISO creation timestamp")
     updated_at: Optional[str] = Field(default=None, description="ISO update timestamp")
     user_id: str = Field(..., description="Owner user ID")
+    alias: Optional[str] = Field(default=None, description="Connection alias")
 
 
 class ConnectedAccountListResponse(BaseModel):

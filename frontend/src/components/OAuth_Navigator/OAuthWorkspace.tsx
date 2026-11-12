@@ -283,8 +283,60 @@ export default function OAuthWorkspace({
             clearInterval(pollIntervalRef.current)
             pollIntervalRef.current = null
         }
-        setConnectionState("idle")
+        if (typeof window !== "undefined") {
+            sessionStorage.removeItem("oauth_nav_pending_account_id")
+            sessionStorage.removeItem("oauth_nav_pending_slug")
+        }
+        setConnectionState("cancelled")
     }, [])
+
+    const checkExistingConnection = React.useCallback(async (slug: string) => {
+        if (!slug) return
+        const cleanSlug = slug.toLowerCase().trim()
+        try {
+            const res = await client.listConnections(userId, cleanSlug)
+            if (res && res.items && res.items.length > 0) {
+                // Prioritize ACTIVE connection
+                const active = res.items.find((it: any) => it.status === "ACTIVE")
+                if (active) {
+                    setConnection(active)
+                    setConnectionState("active")
+                    setConnectionError("")
+                    return
+                }
+                // Check if any connection is initiated
+                const pending = res.items.find((it: any) => it.status === "INITIATED" || it.status === "INITIALIZING")
+                if (pending) {
+                    setConnection(pending)
+                    setPendingAccountId(pending.id)
+                    setConnectionState("initiated")
+                    setConnectionError("")
+                    return
+                }
+                // Check for expired or failed
+                const mostRecent = res.items[0]
+                if (mostRecent.status === "EXPIRED") {
+                    setConnection(mostRecent)
+                    setConnectionState("expired")
+                    setConnectionError(mostRecent.status_reason || "Connection link expired.")
+                } else if (mostRecent.status === "FAILED") {
+                    setConnection(mostRecent)
+                    setConnectionState("failed")
+                    setConnectionError(mostRecent.status_reason || "Connection attempt failed.")
+                } else {
+                    setConnection(mostRecent)
+                    setConnectionState("idle")
+                }
+            } else {
+                setConnection(null)
+                setConnectionState("idle")
+                setConnectionError("")
+            }
+        } catch {
+            setConnection(null)
+            setConnectionState("idle")
+        }
+    }, [client, userId])
 
     const pollStatus = React.useCallback(async (accountId: string) => {
         if (!accountId) return
@@ -294,6 +346,7 @@ export default function OAuthWorkspace({
                 setConnection(data)
                 if (data.status === "ACTIVE") {
                     setConnectionState("active")
+                    setConnectionError("")
                     if (typeof window !== "undefined") {
                         sessionStorage.removeItem("oauth_nav_pending_account_id")
                         sessionStorage.removeItem("oauth_nav_pending_slug")
@@ -302,9 +355,20 @@ export default function OAuthWorkspace({
                         clearInterval(pollIntervalRef.current)
                         pollIntervalRef.current = null
                     }
-                } else if (data.status === "FAILED" || data.status === "EXPIRED") {
+                } else if (data.status === "FAILED") {
                     setConnectionState("failed")
-                    setConnectionError(data.status_reason || `Connection ended with status: ${data.status}`)
+                    setConnectionError(data.status_reason || "Provider OAuth connection failed.")
+                    if (typeof window !== "undefined") {
+                        sessionStorage.removeItem("oauth_nav_pending_account_id")
+                        sessionStorage.removeItem("oauth_nav_pending_slug")
+                    }
+                    if (pollIntervalRef.current) {
+                        clearInterval(pollIntervalRef.current)
+                        pollIntervalRef.current = null
+                    }
+                } else if (data.status === "EXPIRED") {
+                    setConnectionState("expired")
+                    setConnectionError(data.status_reason || "Connection link has expired.")
                     if (typeof window !== "undefined") {
                         sessionStorage.removeItem("oauth_nav_pending_account_id")
                         sessionStorage.removeItem("oauth_nav_pending_slug")
@@ -314,7 +378,7 @@ export default function OAuthWorkspace({
                         pollIntervalRef.current = null
                     }
                 } else {
-                    setConnectionState("polling")
+                    setConnectionState("initiated")
                 }
             }
         } catch (err: any) {
@@ -332,7 +396,7 @@ export default function OAuthWorkspace({
     const startPolling = React.useCallback((accountId: string) => {
         if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
         setPendingAccountId(accountId)
-        setConnectionState("polling")
+        setConnectionState("initiated")
         pollStatus(accountId)
         let count = 0
         pollIntervalRef.current = setInterval(() => {
@@ -340,8 +404,8 @@ export default function OAuthWorkspace({
             if (count > 30) {
                 clearInterval(pollIntervalRef.current)
                 pollIntervalRef.current = null
-                setConnectionState("failed")
-                setConnectionError("Authorization timed out. Click 'Refresh Status Now' to re-check.")
+                setConnectionState("expired")
+                setConnectionError("Authorization timed out. Click 'Refresh Status' or 'Reconnect' to try again.")
             } else {
                 pollStatus(accountId)
             }
@@ -365,11 +429,25 @@ export default function OAuthWorkspace({
         }
     }, [embedded, startPolling])
 
-    async function handleConnect(toolkitSlug: string) {
+    // Synchronize connection status whenever active guide changes
+    React.useEffect(() => {
+        if (!guide?.slug) {
+            setConnection(null)
+            setConnectionState("idle")
+            setConnectionError("")
+            return
+        }
+        if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current)
+            pollIntervalRef.current = null
+        }
+        checkExistingConnection(guide.slug)
+    }, [guide?.slug, checkExistingConnection])
+
+    async function handleConnect(toolkitSlug: string, forceNew: boolean = false) {
         if (!toolkitSlug) return
         const slug = toolkitSlug.toLowerCase().trim()
         setConnectionError("")
-        setConnection(null)
 
         if (slug === "shopify") {
             try {
@@ -384,16 +462,43 @@ export default function OAuthWorkspace({
             }
         }
 
-        setConnectionState("starting")
+        setConnectionState("initializing")
         try {
             const callbackUrl = typeof window !== "undefined"
                 ? `${window.location.origin}${window.location.pathname}`
                 : undefined
 
-            const res = await client.startConnection(slug, userId, `Session ${userId.slice(0, 8)}`, callbackUrl)
+            // Generate unique attempt alias: provider + unique attempt token
+            const attemptAlias = `${slug}_${Date.now().toString(36).slice(-5)}`
+
+            const res = await client.startConnection(slug, userId, attemptAlias, callbackUrl, forceNew)
+
+            if (res && res.already_active) {
+                setConnection({
+                    id: res.connected_account_id,
+                    toolkit_slug: res.toolkit_slug,
+                    status: "ACTIVE",
+                    user_id: userId,
+                    alias: res.alias,
+                })
+                setConnectionState("active")
+                setConnectionError("")
+                return
+            }
+
             if (res && res.redirect_url) {
                 setConnectionRedirectUrl(res.redirect_url)
                 setPendingAccountId(res.connected_account_id)
+                setConnection({
+                    id: res.connected_account_id,
+                    toolkit_slug: res.toolkit_slug,
+                    status: "INITIATED",
+                    user_id: userId,
+                    alias: res.alias,
+                })
+                // Stop loading state immediately once authorization link is generated
+                setConnectionState("initiated")
+
                 if (typeof window !== "undefined") {
                     sessionStorage.setItem("oauth_nav_pending_account_id", res.connected_account_id)
                     sessionStorage.setItem("oauth_nav_pending_slug", slug)
@@ -1105,18 +1210,28 @@ export default function OAuthWorkspace({
                                     </button>
 
                                     <button
-                                        disabled={!!busy || connectionState === "starting" || connectionState === "polling"}
-                                        onClick={() => handleConnect(guide.slug)}
+                                        disabled={!!busy || connectionState === "initializing"}
+                                        onClick={() => {
+                                            if (connectionState === "active") {
+                                                handleConnect(guide.slug, true)
+                                            } else {
+                                                handleConnect(guide.slug, false)
+                                            }
+                                        }}
                                         style={{
-                                            background: (guide.slug === "slack" || guide.slug === "gmail") ? T.butter : T.peach,
+                                            background: connectionState === "active" ? "#D1F4D9" : (guide.slug === "slack" || guide.slug === "gmail") ? T.butter : T.peach,
                                             fontWeight: 700,
                                         }}
                                     >
                                         <Icon name="key" size={16} />
-                                        {connectionState === "starting"
+                                        {connectionState === "initializing"
                                             ? "Initiating…"
-                                            : connectionState === "polling"
-                                            ? "Connecting…"
+                                            : connectionState === "initiated"
+                                            ? "Awaiting Approval…"
+                                            : connectionState === "active"
+                                            ? `✓ ${guide.app_name} Connected`
+                                            : (connectionState === "failed" || connectionState === "expired")
+                                            ? `Retry Connect`
                                             : `Connect ${guide.app_name}`}
                                     </button>
 
@@ -1135,9 +1250,11 @@ export default function OAuthWorkspace({
                                                 ? "#E8F8ED"
                                                 : connectionState === "failed"
                                                   ? "#FEECEC"
-                                                  : connectionState === "shopify_custom_required"
-                                                    ? T.peach
-                                                    : T.butter,
+                                                  : connectionState === "expired"
+                                                    ? "#FFF3E0"
+                                                    : connectionState === "shopify_custom_required"
+                                                      ? T.peach
+                                                      : T.butter,
                                         boxShadow: "3px 3px 0 black",
                                         borderRadius: 14,
                                         padding: "16px 20px",
@@ -1154,23 +1271,31 @@ export default function OAuthWorkspace({
                                         }}
                                     >
                                         <b style={{ fontFamily: "var(--display)", fontSize: 14 }}>
-                                            {guide ? guide.app_name : "OAuth"} Connection · {connection?.status || (connectionState === "starting" ? "STARTING" : connectionState === "polling" ? "AWAITING AUTHORIZATION" : connectionState === "shopify_custom_required" ? "CUSTOM OAUTH REQUIRED" : "FAILED")}
+                                            {guide ? guide.app_name : "OAuth"} Connection · {
+                                                connectionState === "initializing" ? "INITIALIZING"
+                                                : connectionState === "initiated" ? "INITIATED · AWAITING APPROVAL"
+                                                : connectionState === "active" ? "ACTIVE"
+                                                : connectionState === "expired" ? "EXPIRED"
+                                                : connectionState === "cancelled" ? "CANCELLED"
+                                                : connectionState === "shopify_custom_required" ? "CUSTOM OAUTH REQUIRED"
+                                                : "FAILED"
+                                            }
                                         </b>
                                         <span className="tag" style={{ fontSize: 11 }}>
                                             Session: {userId.slice(0, 12)}…
                                         </span>
                                     </div>
 
-                                    {connectionState === "starting" && (
+                                    {connectionState === "initializing" && (
                                         <p style={{ margin: 0 }}>
-                                            Generating Composio authorization link and session…
+                                            Generating secure Composio authorization link and session…
                                         </p>
                                     )}
 
-                                    {connectionState === "polling" && (
+                                    {connectionState === "initiated" && (
                                         <div>
                                             <p style={{ margin: "0 0 10px" }}>
-                                                Authorization window initiated. Waiting for approval confirmation from provider consent flow…
+                                                Authorization window opened. Complete the consent prompt in the newly opened tab to activate your connection.
                                             </p>
                                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                                 {connectionRedirectUrl && (
@@ -1210,18 +1335,26 @@ export default function OAuthWorkspace({
                                             <Rows
                                                 data={{
                                                     "Account ID": connection?.id,
-                                                    "Toolkit": connection?.toolkit_slug,
-                                                    "Status": connection?.status,
-                                                    "Updated": connection?.updated_at || connection?.created_at,
+                                                    "Toolkit": connection?.toolkit_slug || guide?.slug,
+                                                    "Status": "ACTIVE",
+                                                    "Alias": connection?.alias || "—",
+                                                    "Updated": connection?.updated_at || connection?.created_at || "Just now",
                                                 }}
                                             />
-                                            <div style={{ marginTop: 10 }}>
+                                            <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
                                                 <button
                                                     className="action secondary"
-                                                    onClick={() => handleConnect(guide?.slug || "")}
+                                                    onClick={() => handleConnect(guide?.slug || "", true)}
                                                     style={{ fontSize: 12, padding: "6px 12px" }}
                                                 >
                                                     Reconnect
+                                                </button>
+                                                <button
+                                                    className="action secondary"
+                                                    onClick={() => pollStatus(connection?.id || pendingAccountId)}
+                                                    style={{ fontSize: 12, padding: "6px 12px" }}
+                                                >
+                                                    Refresh Status
                                                 </button>
                                             </div>
                                         </div>
@@ -1234,10 +1367,40 @@ export default function OAuthWorkspace({
                                             </p>
                                             <button
                                                 className="action"
-                                                onClick={() => handleConnect(guide?.slug || "")}
+                                                onClick={() => handleConnect(guide?.slug || "", true)}
                                                 style={{ fontSize: 12, padding: "6px 12px" }}
                                             >
                                                 Retry Connection
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {connectionState === "expired" && (
+                                        <div>
+                                            <p style={{ margin: "0 0 10px", color: "#E65100", fontWeight: 600 }}>
+                                                {connectionError || "Authorization link or connection has expired. Please initiate a fresh link."}
+                                            </p>
+                                            <button
+                                                className="action"
+                                                onClick={() => handleConnect(guide?.slug || "", true)}
+                                                style={{ fontSize: 12, padding: "6px 12px" }}
+                                            >
+                                                Start Fresh Connection
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {connectionState === "cancelled" && (
+                                        <div>
+                                            <p style={{ margin: "0 0 10px", color: "#555" }}>
+                                                Authorization polling cancelled. You can resume or start fresh anytime.
+                                            </p>
+                                            <button
+                                                className="action secondary"
+                                                onClick={() => handleConnect(guide?.slug || "", true)}
+                                                style={{ fontSize: 12, padding: "6px 12px" }}
+                                            >
+                                                Connect {guide?.app_name}
                                             </button>
                                         </div>
                                     )}

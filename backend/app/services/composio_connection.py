@@ -1,4 +1,5 @@
 import logging
+import uuid
 from typing import Dict, Any, Optional, List
 import httpx
 from fastapi import HTTPException
@@ -183,24 +184,89 @@ class ComposioConnectionService:
             detail=f"No enabled OAuth configuration found for toolkit '{slug}'.",
         )
 
+    async def find_active_connection(
+        self, user_id: str, toolkit_slug: str
+    ) -> Optional[ConnectedAccountResponse]:
+        """
+        Looks up existing connected accounts for the given user and toolkit.
+        Returns the first ACTIVE connection if one exists.
+        """
+        slug = toolkit_slug.lower().strip()
+        try:
+            data = await self._request("GET", f"/connected_accounts?user_ids={user_id}")
+            items_raw = data.get("items", [])
+        except HTTPException:
+            items_raw = []
+
+        for item in items_raw:
+            item_slug = item.get("toolkit", {}).get("slug", "").lower()
+            item_user = item.get("user_id", "").strip()
+            item_status = item.get("status", "").upper()
+            if item_slug == slug and item_user == user_id.strip() and item_status == "ACTIVE":
+                return ConnectedAccountResponse(
+                    id=item.get("id", ""),
+                    toolkit_slug=item_slug,
+                    status="ACTIVE",
+                    status_reason=item.get("status_reason"),
+                    created_at=item.get("created_at"),
+                    updated_at=item.get("updated_at"),
+                    user_id=item_user,
+                    alias=item.get("alias"),
+                )
+        return None
+
     async def create_connection_link(
         self,
         toolkit_slug: str,
         user_id: str,
         alias: Optional[str] = None,
         callback_url: Optional[str] = None,
+        force_new: bool = False,
     ) -> ConnectionStartResponse:
         slug = toolkit_slug.lower().strip()
+
+        # 1. Unless force_new is requested, check if an ACTIVE connection already exists
+        if not force_new:
+            active_conn = await self.find_active_connection(user_id=user_id, toolkit_slug=slug)
+            if active_conn:
+                return ConnectionStartResponse(
+                    redirect_url=None,
+                    connected_account_id=active_conn.id,
+                    expires_at=None,
+                    toolkit_slug=slug,
+                    is_custom_auth=False,
+                    status="ACTIVE",
+                    already_active=True,
+                    alias=active_conn.alias,
+                    message=f"Existing ACTIVE connection for {slug} detected. Use force_new=True to re-authorize.",
+                )
+
+        # 2. Resolve or initialize auth configuration
         config_info = await self.get_or_create_auth_config(slug)
         auth_config_id = config_info["id"]
         is_custom = config_info.get("is_custom_auth", False)
 
+        # 3. Ensure alias uniqueness per attempt & toolkit to avoid Composio entity collision
+        resolved_alias = alias.strip() if alias and alias.strip() else None
+        if not resolved_alias or resolved_alias.startswith("Session "):
+            resolved_alias = f"{slug}_{uuid.uuid4().hex[:8]}"
+        else:
+            # Check existing connections for this user to avoid duplicate alias error
+            try:
+                data = await self._request("GET", f"/connected_accounts?user_ids={user_id}")
+                existing_aliases = {
+                    item.get("alias") for item in data.get("items", []) if item.get("alias")
+                }
+                if resolved_alias in existing_aliases:
+                    resolved_alias = f"{resolved_alias}_{uuid.uuid4().hex[:6]}"
+            except Exception:
+                resolved_alias = f"{resolved_alias}_{uuid.uuid4().hex[:6]}"
+
         payload: Dict[str, Any] = {
             "auth_config_id": auth_config_id,
             "user_id": user_id,
+            "alias": resolved_alias,
         }
-        if alias:
-            payload["alias"] = alias
         if callback_url:
             payload["callback_url"] = callback_url
 
@@ -223,6 +289,9 @@ class ComposioConnectionService:
             expires_at=expires_at,
             toolkit_slug=slug,
             is_custom_auth=is_custom,
+            status="INITIATED",
+            already_active=False,
+            alias=resolved_alias,
             message="Authorization link generated successfully. Direct the user to redirect_url to complete OAuth.",
         )
 
@@ -256,24 +325,32 @@ class ComposioConnectionService:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             user_id=account_owner,
+            alias=data.get("alias"),
         )
 
-    async def list_user_connections(self, user_id: str) -> ConnectedAccountListResponse:
+    async def list_user_connections(
+        self, user_id: str, toolkit_slug: Optional[str] = None
+    ) -> ConnectedAccountListResponse:
         data = await self._request("GET", f"/connected_accounts?user_ids={user_id}")
         items_raw = data.get("items", [])
         results: List[ConnectedAccountResponse] = []
+        slug_filter = toolkit_slug.lower().strip() if toolkit_slug else None
 
         for item in items_raw:
-            # Redact all secrets and only expose safe metadata
+            item_slug = item.get("toolkit", {}).get("slug", "unknown").lower()
+            if slug_filter and item_slug != slug_filter:
+                continue
+
             results.append(
                 ConnectedAccountResponse(
                     id=item.get("id", ""),
-                    toolkit_slug=item.get("toolkit", {}).get("slug", "unknown"),
+                    toolkit_slug=item_slug,
                     status=item.get("status", "UNKNOWN"),
                     status_reason=item.get("status_reason"),
                     created_at=item.get("created_at"),
                     updated_at=item.get("updated_at"),
                     user_id=item.get("user_id", user_id),
+                    alias=item.get("alias"),
                 )
             )
 

@@ -236,6 +236,7 @@ async def start_connection(
     Initializes a real Composio OAuth connection link for a supported toolkit.
     Discovers the Composio-managed auth configuration (or custom config for Shopify)
     and returns the direct authorization URL and connected account identifier.
+    If an ACTIVE connection already exists and force_new is False, returns the active account.
     """
     clean_slug = toolkit_slug.lower().strip()
     return await composio_connection_service.create_connection_link(
@@ -243,6 +244,7 @@ async def start_connection(
         user_id=payload.user_id,
         alias=payload.alias,
         callback_url=payload.callback_url,
+        force_new=bool(payload.force_new),
     )
 
 
@@ -280,6 +282,7 @@ async def get_connection_status(
 async def list_user_connections(
     user_id: Optional[str] = Query(default=None, description="Owner user ID for session validation"),
     x_user_id: Optional[str] = Header(default=None, alias="X-User-ID", description="Owner user ID header"),
+    toolkit_slug: Optional[str] = Query(default=None, description="Filter by toolkit slug"),
 ):
     """
     Lists all connected accounts owned by the current browser session.
@@ -292,6 +295,7 @@ async def list_user_connections(
         )
     return await composio_connection_service.list_user_connections(
         user_id=active_user_id.strip(),
+        toolkit_slug=toolkit_slug.strip() if toolkit_slug else None,
     )
 
 
