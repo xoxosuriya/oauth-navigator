@@ -262,11 +262,58 @@ export default function OAuthWorkspace({
 
         [difficulty, setDifficulty] = React.useState(""),
 
-        [health, setHealth] = React.useState("Not checked")
+        [health, setHealth] = React.useState("checking")
 
     const catalogRequest = React.useRef<AbortController | null>(null)
 
     const active = React.useRef<AbortController | null>(null)
+
+    // FIX 3: Automatic initial health check on component mount (with unmount guard)
+    React.useEffect(() => {
+
+        if (embedded || typeof window === "undefined") return
+
+        let mounted = true
+
+        setHealth("checking")
+
+        client.health()
+
+            .then((res: any) => {
+
+                if (mounted) {
+
+                    if (res && res.status === "healthy") {
+
+                        setHealth("healthy")
+
+                    } else {
+
+                        setHealth("unavailable")
+
+                    }
+
+                }
+
+            })
+
+            .catch(() => {
+
+                if (mounted) {
+
+                    setHealth("unavailable")
+
+                }
+
+            })
+
+        return () => {
+
+            mounted = false
+
+        }
+
+    }, [client, embedded])
 
     React.useEffect(
 
@@ -370,7 +417,7 @@ export default function OAuthWorkspace({
 
         } else {
 
-            await investigate(id)
+            setGuide(null)
 
         }
 
@@ -626,7 +673,19 @@ export default function OAuthWorkspace({
 
                                 ? "Interface preview · no application selected"
 
-                                : "Local API · " + health}
+                                : health === "checking"
+
+                                  ? "API · Checking"
+
+                                  : health === "healthy"
+
+                                    ? "API · Healthy"
+
+                                    : health === "unavailable"
+
+                                      ? "API · Unavailable"
+
+                                      : "API · " + health}
 
                         </span>
 
@@ -2084,6 +2143,8 @@ export default function OAuthWorkspace({
 
                                         onClick={async () => {
 
+                                            setHealth("checking")
+
                                             const d = await run(
 
                                                 "Checking health",
@@ -2092,7 +2153,15 @@ export default function OAuthWorkspace({
 
                                             )
 
-                                            if (d) setHealth(d.status)
+                                            if (d && d.status === "healthy") {
+
+                                                setHealth("healthy")
+
+                                            } else {
+
+                                                setHealth("unavailable")
+
+                                            }
 
                                         }}
 

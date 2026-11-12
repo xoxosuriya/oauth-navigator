@@ -385,6 +385,32 @@ TWO_PART_TLDS = {
 
 DOC_PREFIXES = ("developers.", "developer.", "docs.", "doc.", "api.", "dev.")
 
+# Explicit, verified domain mappings for popular developer platforms where TLD != .com or brand is well-established
+KNOWN_APP_DOMAINS: Dict[str, str] = {
+    "linear": "linear.app",
+    "notion": "notion.com",
+    "slack": "slack.com",
+    "shopify": "shopify.com",
+    "github": "github.com",
+    "gitlab": "gitlab.com",
+    "jira": "atlassian.com",
+    "confluence": "atlassian.com",
+    "atlassian": "atlassian.com",
+    "airtable": "airtable.com",
+    "hubspot": "hubspot.com",
+    "salesforce": "salesforce.com",
+    "zendesk": "zendesk.com",
+    "stripe": "stripe.com",
+    "figma": "figma.com",
+    "asana": "asana.com",
+    "discord": "discord.com",
+    "zoom": "zoom.us",
+    "postman": "postman.com",
+    "miro": "miro.com",
+    "clickup": "clickup.com",
+    "trello": "trello.com",
+}
+
 
 def extract_apex_domain(host: str) -> str:
     """
@@ -539,9 +565,23 @@ class DocFetcherService:
                     pass
 
         if not supplied_host:
-            # Derive fallback domain from app name (e.g. 'Notion' -> 'notion.com')
             slug = re.sub(r"[^a-z0-9\-]", "", app_name.lower().strip())
-            if slug:
+            # 2a. Check explicit verified mapping for known apps (e.g. 'Linear' -> 'linear.app', 'Zoom' -> 'zoom.us')
+            if slug in KNOWN_APP_DOMAINS:
+                supplied_host = KNOWN_APP_DOMAINS[slug]
+                supplied_url = f"https://{supplied_host}"
+            elif composio_doc_url:
+                try:
+                    p = urllib.parse.urlsplit(composio_doc_url)
+                    if p.hostname:
+                        supplied_host = p.hostname.lower().strip()
+                        supplied_url = composio_doc_url
+                        if p.path and p.path.strip("/") != "":
+                            has_specific_path = True
+                except Exception:
+                    pass
+            elif slug and len(slug) >= 3 and not slug.isdigit():
+                # Derive tentative fallback domain for standard brands without asserting as verified fact
                 supplied_host = f"{slug}.com"
                 supplied_url = f"https://{supplied_host}"
 

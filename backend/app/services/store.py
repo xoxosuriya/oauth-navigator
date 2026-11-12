@@ -333,6 +333,22 @@ def convert_research_result_to_guide(result: ResearchResultResponse) -> OAuthGui
     )
 
 
+# Known canonical aliases for foundational developer platforms
+KNOWN_ALIASES: Dict[str, str] = {
+    "gmail": "gmail",
+    "google workspace": "gmail",
+    "google-workspace": "gmail",
+    "gmail / google workspace": "gmail",
+    "gmail/google workspace": "gmail",
+    "gsuite": "gmail",
+    "g suite": "gmail",
+    "g-suite": "gmail",
+    "google apps": "gmail",
+    "slack": "slack",
+    "shopify": "shopify",
+}
+
+
 class GuideStore:
     def __init__(self, data_dir: Optional[str] = None):
         self.data_dir = data_dir or settings.DATA_DIR
@@ -340,8 +356,25 @@ class GuideStore:
         self.store_file = os.path.join(self.data_dir, "guides_store.json")
         self._guides: Dict[str, OAuthGuide] = {}
         self._slug_map: Dict[str, str] = {}
+        self._name_map: Dict[str, str] = {}
         self._lock = threading.Lock()
         self._initialize()
+
+    def _index_guide(self, guide: OAuthGuide):
+        """Register a guide by ID, slug, display name, and safe name components."""
+        self._guides[guide.id] = guide
+        self._slug_map[guide.slug.lower()] = guide.id
+
+        # Index exact display name
+        clean_name = guide.app_name.lower().strip()
+        self._name_map[clean_name] = guide.id
+
+        # Index slash-separated subcomponents (e.g. "Gmail / Google Workspace" -> "gmail", "google workspace")
+        if "/" in guide.app_name:
+            for part in guide.app_name.split("/"):
+                cleaned = part.strip().lower()
+                if len(cleaned) >= 3 and cleaned not in self._name_map:
+                    self._name_map[cleaned] = guide.id
 
     def _initialize(self):
         with self._lock:
@@ -353,8 +386,7 @@ class GuideStore:
                         data = json.load(f)
                         for item in data:
                             guide = OAuthGuide.model_validate(item)
-                            self._guides[guide.id] = guide
-                            self._slug_map[guide.slug.lower()] = guide.id
+                            self._index_guide(guide)
                 except Exception as e:
                     logger.error(f"[GuideStore] Error loading seed data: {e}")
 
@@ -365,8 +397,7 @@ class GuideStore:
                         data = json.load(f)
                         for item in data:
                             guide = OAuthGuide.model_validate(item)
-                            self._guides[guide.id] = guide
-                            self._slug_map[guide.slug.lower()] = guide.id
+                            self._index_guide(guide)
                 except Exception as e:
                     logger.error(f"[GuideStore] Error loading persisted store: {e}")
 
@@ -435,22 +466,44 @@ class GuideStore:
 
     def get_guide(self, id_or_slug: str) -> Optional[OAuthGuide]:
         with self._lock:
+            if not id_or_slug or not isinstance(id_or_slug, str):
+                return None
             key = id_or_slug.strip()
-            # Check by direct ID
+            # 1. Check direct ID
             if key in self._guides:
                 return self._guides[key]
-            # Check by lowercase slug
+
+            # 2. Check direct slug
             slug_key = key.lower()
             if slug_key in self._slug_map:
                 guide_id = self._slug_map[slug_key]
                 return self._guides.get(guide_id)
+
+            # 3. Check exact app name (or indexed sub-names like 'google workspace')
+            if slug_key in self._name_map:
+                guide_id = self._name_map[slug_key]
+                return self._guides.get(guide_id)
+
+            # 4. Check known canonical aliases
+            if slug_key in KNOWN_ALIASES:
+                target_slug = KNOWN_ALIASES[slug_key]
+                if target_slug in self._slug_map:
+                    guide_id = self._slug_map[target_slug]
+                    return self._guides.get(guide_id)
+
+            # 5. Normalized alphanumeric match (ignores punctuation/slashes)
+            norm_key = re.sub(r"[^a-z0-9]", "", slug_key)
+            if norm_key:
+                for name, gid in self._name_map.items():
+                    if re.sub(r"[^a-z0-9]", "", name) == norm_key:
+                        return self._guides.get(gid)
+
             return None
 
     def save_guide(self, guide: OAuthGuide) -> OAuthGuide:
         with self._lock:
             guide.updated_at = datetime.now(timezone.utc)
-            self._guides[guide.id] = guide
-            self._slug_map[guide.slug.lower()] = guide.id
+            self._index_guide(guide)
         self._persist()
         return guide
 
