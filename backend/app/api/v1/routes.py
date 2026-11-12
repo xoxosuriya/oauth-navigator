@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Header
 from typing import Optional
 from datetime import datetime, timezone
 from app.models.guide import (
@@ -7,6 +7,13 @@ from app.models.guide import (
     ShareGuideRequest,
     ShareGuideResponse,
     InvestigateRequest,
+)
+from app.models.connection import (
+    ConnectionStartRequest,
+    ConnectionStartResponse,
+    ConnectedAccountResponse,
+    ConnectedAccountListResponse,
+    ShopifyConfigStatusResponse,
 )
 from app.models.composio import (
     ComposioClassification,
@@ -19,6 +26,7 @@ from app.models.research import (
 )
 from app.services.store import guide_store, convert_research_result_to_guide
 from app.services.composio_metadata import composio_metadata_service
+from app.services.composio_connection import composio_connection_service
 from app.services.research import gemini_research_service
 from app.core.rate_limit import research_rate_limiter, get_client_ip
 from app.core.config import settings
@@ -202,6 +210,88 @@ async def research_app_endpoint(request: ResearchRequest, http_request: Request)
     return await gemini_research_service.research_app(
         app_name=cleaned_name,
         website_or_domain=request.website_or_domain.strip() if request.website_or_domain else None,
+    )
+
+
+# =============================================================================
+# Composio Connection & OAuth Lifecycle Endpoints
+# =============================================================================
+
+@api_router.get("/connections/shopify/status", response_model=ShopifyConfigStatusResponse, tags=["Connections"])
+async def get_shopify_connection_status():
+    """Returns Shopify custom OAuth configuration status and setup instructions."""
+    return composio_connection_service.get_shopify_status()
+
+
+@api_router.post(
+    "/connections/{toolkit_slug}/start",
+    response_model=ConnectionStartResponse,
+    tags=["Connections"],
+)
+async def start_connection(
+    toolkit_slug: str,
+    payload: ConnectionStartRequest,
+):
+    """
+    Initializes a real Composio OAuth connection link for a supported toolkit.
+    Discovers the Composio-managed auth configuration (or custom config for Shopify)
+    and returns the direct authorization URL and connected account identifier.
+    """
+    clean_slug = toolkit_slug.lower().strip()
+    return await composio_connection_service.create_connection_link(
+        toolkit_slug=clean_slug,
+        user_id=payload.user_id,
+        alias=payload.alias,
+        callback_url=payload.callback_url,
+    )
+
+
+@api_router.get(
+    "/connections/{connected_account_id}",
+    response_model=ConnectedAccountResponse,
+    tags=["Connections"],
+)
+async def get_connection_status(
+    connected_account_id: str,
+    user_id: Optional[str] = Query(default=None, description="Owner user ID for session validation"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-ID", description="Owner user ID header"),
+):
+    """
+    Retrieves the real-time status of a Composio connected account.
+    Enforces user session ownership and redacts all secrets/tokens.
+    """
+    active_user_id = user_id or x_user_id
+    if not active_user_id or not active_user_id.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="user_id query parameter or X-User-ID header is required for ownership validation.",
+        )
+    return await composio_connection_service.get_connected_account(
+        connected_account_id=connected_account_id.strip(),
+        user_id=active_user_id.strip(),
+    )
+
+
+@api_router.get(
+    "/connections",
+    response_model=ConnectedAccountListResponse,
+    tags=["Connections"],
+)
+async def list_user_connections(
+    user_id: Optional[str] = Query(default=None, description="Owner user ID for session validation"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-ID", description="Owner user ID header"),
+):
+    """
+    Lists all connected accounts owned by the current browser session.
+    """
+    active_user_id = user_id or x_user_id
+    if not active_user_id or not active_user_id.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="user_id query parameter or X-User-ID header is required for ownership validation.",
+        )
+    return await composio_connection_service.list_user_connections(
+        user_id=active_user_id.strip(),
     )
 
 

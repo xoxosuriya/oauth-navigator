@@ -60,6 +60,9 @@ class Settings(BaseModel):
     COMPOSIO_BASE_URL: str = Field(
         default_factory=lambda: os.getenv("COMPOSIO_BASE_URL", "https://backend.composio.dev/api/v3.1")
     )
+    COMPOSIO_SHOPIFY_AUTH_CONFIG_ID: Optional[str] = Field(
+        default_factory=lambda: os.getenv("COMPOSIO_SHOPIFY_AUTH_CONFIG_ID", "").strip() or None
+    )
     
     # LLM Settings for Live Research Agent
     GEMINI_API_KEY: str = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))

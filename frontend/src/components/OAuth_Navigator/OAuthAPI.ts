@@ -32,6 +32,20 @@ export class APIError extends Error {
 
 }
 
+export function getSessionUserId(): string {
+    if (typeof window === "undefined") return "usr_demo_session"
+    try {
+        let uid = localStorage.getItem("oauth_nav_session_user_id")
+        if (!uid || uid.length < 5) {
+            uid = "usr_" + Math.random().toString(36).substring(2, 10) + Date.now().toString(36).slice(-4)
+            localStorage.setItem("oauth_nav_session_user_id", uid)
+        }
+        return uid
+    } catch {
+        return "usr_demo_session"
+    }
+}
+
 export function service(base?: string) {
 
     const root = resolveBase(base)
@@ -171,6 +185,40 @@ export function service(base?: string) {
         shared: (id: string, s?: AbortSignal) =>
 
             request("/guides/share/" + encodeURIComponent(id), undefined, s),
+
+        startConnection: (
+            slug: string,
+            userId: string,
+            alias?: string,
+            callbackUrl?: string,
+            s?: AbortSignal
+        ) =>
+            request(
+                "/connections/" + encodeURIComponent(slug) + "/start",
+                {
+                    user_id: userId,
+                    ...(alias ? { alias } : {}),
+                    ...(callbackUrl ? { callback_url: callbackUrl } : {}),
+                },
+                s
+            ),
+
+        getConnection: (id: string, userId: string, s?: AbortSignal) =>
+            request(
+                "/connections/" + encodeURIComponent(id) + "?user_id=" + encodeURIComponent(userId),
+                undefined,
+                s
+            ),
+
+        listConnections: (userId: string, s?: AbortSignal) =>
+            request(
+                "/connections?user_id=" + encodeURIComponent(userId),
+                undefined,
+                s
+            ),
+
+        shopifyStatus: (s?: AbortSignal) =>
+            request("/connections/shopify/status", undefined, s),
 
     }
 

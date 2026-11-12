@@ -6,7 +6,7 @@ import { Section, Icon, IconTile, Reveal, T } from "../Kit.tsx"
 
 import { OAuthDiagram } from "./OAuthDiagram.tsx"
 
-import { service, resolveBase } from "./OAuthAPI.ts"
+import { service, resolveBase, getSessionUserId } from "./OAuthAPI.ts"
 
 interface Props {
 
@@ -268,6 +268,151 @@ export default function OAuthWorkspace({
 
     const active = React.useRef<AbortController | null>(null)
 
+    const [connection, setConnection] = React.useState<any>(null),
+        [connectionState, setConnectionState] = React.useState<string>("idle"),
+        [connectionError, setConnectionError] = React.useState<string>(""),
+        [connectionRedirectUrl, setConnectionRedirectUrl] = React.useState<string>(""),
+        [pendingAccountId, setPendingAccountId] = React.useState<string>(""),
+        [shopifyInfo, setShopifyInfo] = React.useState<any>(null)
+
+    const pollIntervalRef = React.useRef<any>(null)
+    const userId = React.useMemo(() => getSessionUserId(), [])
+
+    const cancelPolling = React.useCallback(() => {
+        if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current)
+            pollIntervalRef.current = null
+        }
+        setConnectionState("idle")
+    }, [])
+
+    const pollStatus = React.useCallback(async (accountId: string) => {
+        if (!accountId) return
+        try {
+            const data = await client.getConnection(accountId, userId)
+            if (data) {
+                setConnection(data)
+                if (data.status === "ACTIVE") {
+                    setConnectionState("active")
+                    if (typeof window !== "undefined") {
+                        sessionStorage.removeItem("oauth_nav_pending_account_id")
+                        sessionStorage.removeItem("oauth_nav_pending_slug")
+                    }
+                    if (pollIntervalRef.current) {
+                        clearInterval(pollIntervalRef.current)
+                        pollIntervalRef.current = null
+                    }
+                } else if (data.status === "FAILED" || data.status === "EXPIRED") {
+                    setConnectionState("failed")
+                    setConnectionError(data.status_reason || `Connection ended with status: ${data.status}`)
+                    if (typeof window !== "undefined") {
+                        sessionStorage.removeItem("oauth_nav_pending_account_id")
+                        sessionStorage.removeItem("oauth_nav_pending_slug")
+                    }
+                    if (pollIntervalRef.current) {
+                        clearInterval(pollIntervalRef.current)
+                        pollIntervalRef.current = null
+                    }
+                } else {
+                    setConnectionState("polling")
+                }
+            }
+        } catch (err: any) {
+            if (err?.status === 404) {
+                setConnectionState("failed")
+                setConnectionError("Connected account not found or expired.")
+                if (pollIntervalRef.current) {
+                    clearInterval(pollIntervalRef.current)
+                    pollIntervalRef.current = null
+                }
+            }
+        }
+    }, [client, userId])
+
+    const startPolling = React.useCallback((accountId: string) => {
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+        setPendingAccountId(accountId)
+        setConnectionState("polling")
+        pollStatus(accountId)
+        let count = 0
+        pollIntervalRef.current = setInterval(() => {
+            count++
+            if (count > 30) {
+                clearInterval(pollIntervalRef.current)
+                pollIntervalRef.current = null
+                setConnectionState("failed")
+                setConnectionError("Authorization timed out. Click 'Refresh Status Now' to re-check.")
+            } else {
+                pollStatus(accountId)
+            }
+        }, 3000)
+    }, [pollStatus])
+
+    React.useEffect(() => {
+        return () => {
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+        }
+    }, [])
+
+    React.useEffect(() => {
+        if (typeof window === "undefined" || embedded) return
+        const params = new URLSearchParams(window.location.search)
+        const connParam = params.get("connection_id") || params.get("connected_account_id")
+        const storedPending = sessionStorage.getItem("oauth_nav_pending_account_id")
+        const targetId = connParam || storedPending
+        if (targetId) {
+            startPolling(targetId)
+        }
+    }, [embedded, startPolling])
+
+    async function handleConnect(toolkitSlug: string) {
+        if (!toolkitSlug) return
+        const slug = toolkitSlug.toLowerCase().trim()
+        setConnectionError("")
+        setConnection(null)
+
+        if (slug === "shopify") {
+            try {
+                const sStatus = await client.shopifyStatus()
+                if (!sStatus.has_custom_config) {
+                    setShopifyInfo(sStatus)
+                    setConnectionState("shopify_custom_required")
+                    return
+                }
+            } catch {
+                // proceed
+            }
+        }
+
+        setConnectionState("starting")
+        try {
+            const callbackUrl = typeof window !== "undefined"
+                ? `${window.location.origin}${window.location.pathname}`
+                : undefined
+
+            const res = await client.startConnection(slug, userId, `Session ${userId.slice(0, 8)}`, callbackUrl)
+            if (res && res.redirect_url) {
+                setConnectionRedirectUrl(res.redirect_url)
+                setPendingAccountId(res.connected_account_id)
+                if (typeof window !== "undefined") {
+                    sessionStorage.setItem("oauth_nav_pending_account_id", res.connected_account_id)
+                    sessionStorage.setItem("oauth_nav_pending_slug", slug)
+                }
+                startPolling(res.connected_account_id)
+                const authWindow = window.open(res.redirect_url, "_blank")
+                if (!authWindow || authWindow.closed || typeof authWindow.closed === "undefined") {
+                    window.location.href = res.redirect_url
+                }
+            } else {
+                setConnectionState("failed")
+                setConnectionError("Failed to generate authorization URL.")
+            }
+        } catch (err: any) {
+            setConnectionState("failed")
+            setConnectionError(err.message || "Failed to start connection.")
+        }
+    }
+
     // FIX 3: Automatic initial health check on component mount (with unmount guard)
     React.useEffect(() => {
 
@@ -405,6 +550,12 @@ export default function OAuthWorkspace({
 
         setShare("")
 
+        setConnection(null)
+
+        setConnectionState("idle")
+
+        setConnectionError("")
+
         setTab("investigate")
 
         const g = await run("Investigating", (s) => client.investigate(n, s))
@@ -434,6 +585,12 @@ export default function OAuthWorkspace({
         setGuide(null)
 
         setShare("")
+
+        setConnection(null)
+
+        setConnectionState("idle")
+
+        setConnectionError("")
 
         const g = await run("Opening guide", (s) => client.guide(id, s))
 
@@ -947,8 +1104,161 @@ export default function OAuthWorkspace({
 
                                     </button>
 
+                                    <button
+                                        disabled={!!busy || connectionState === "starting" || connectionState === "polling"}
+                                        onClick={() => handleConnect(guide.slug)}
+                                        style={{
+                                            background: (guide.slug === "slack" || guide.slug === "gmail") ? T.butter : T.peach,
+                                            fontWeight: 700,
+                                        }}
+                                    >
+                                        <Icon name="key" size={16} />
+                                        {connectionState === "starting"
+                                            ? "Initiating…"
+                                            : connectionState === "polling"
+                                            ? "Connecting…"
+                                            : `Connect ${guide.app_name}`}
+                                    </button>
+
                                 </div>
 
+                            )}
+
+                            {connectionState !== "idle" && (
+                                <div
+                                    className="message"
+                                    style={{
+                                        marginTop: 20,
+                                        border: "2px solid black",
+                                        background:
+                                            connectionState === "active"
+                                                ? "#E8F8ED"
+                                                : connectionState === "failed"
+                                                  ? "#FEECEC"
+                                                  : connectionState === "shopify_custom_required"
+                                                    ? T.peach
+                                                    : T.butter,
+                                        boxShadow: "3px 3px 0 black",
+                                        borderRadius: 14,
+                                        padding: "16px 20px",
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            justifyContent: "space-between",
+                                            alignItems: "center",
+                                            flexWrap: "wrap",
+                                            gap: 10,
+                                            marginBottom: 10,
+                                        }}
+                                    >
+                                        <b style={{ fontFamily: "var(--display)", fontSize: 14 }}>
+                                            {guide ? guide.app_name : "OAuth"} Connection · {connection?.status || (connectionState === "starting" ? "STARTING" : connectionState === "polling" ? "AWAITING AUTHORIZATION" : connectionState === "shopify_custom_required" ? "CUSTOM OAUTH REQUIRED" : "FAILED")}
+                                        </b>
+                                        <span className="tag" style={{ fontSize: 11 }}>
+                                            Session: {userId.slice(0, 12)}…
+                                        </span>
+                                    </div>
+
+                                    {connectionState === "starting" && (
+                                        <p style={{ margin: 0 }}>
+                                            Generating Composio authorization link and session…
+                                        </p>
+                                    )}
+
+                                    {connectionState === "polling" && (
+                                        <div>
+                                            <p style={{ margin: "0 0 10px" }}>
+                                                Authorization window initiated. Waiting for approval confirmation from provider consent flow…
+                                            </p>
+                                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                                {connectionRedirectUrl && (
+                                                    <a
+                                                        href={connectionRedirectUrl}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="action secondary"
+                                                        style={{ fontSize: 12, padding: "6px 12px" }}
+                                                    >
+                                                        Open Authorization Link ↗
+                                                    </a>
+                                                )}
+                                                <button
+                                                    className="action secondary"
+                                                    onClick={() => pollStatus(connection?.id || pendingAccountId)}
+                                                    style={{ fontSize: 12, padding: "6px 12px" }}
+                                                >
+                                                    Refresh Status
+                                                </button>
+                                                <button
+                                                    className="action secondary"
+                                                    onClick={cancelPolling}
+                                                    style={{ fontSize: 12, padding: "6px 12px" }}
+                                                >
+                                                    Cancel
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {connectionState === "active" && (
+                                        <div>
+                                            <p style={{ margin: "0 0 10px", color: "#1B5E20", fontWeight: 600 }}>
+                                                ✓ OAuth connection is active! Tokens are managed securely on the backend.
+                                            </p>
+                                            <Rows
+                                                data={{
+                                                    "Account ID": connection?.id,
+                                                    "Toolkit": connection?.toolkit_slug,
+                                                    "Status": connection?.status,
+                                                    "Updated": connection?.updated_at || connection?.created_at,
+                                                }}
+                                            />
+                                            <div style={{ marginTop: 10 }}>
+                                                <button
+                                                    className="action secondary"
+                                                    onClick={() => handleConnect(guide?.slug || "")}
+                                                    style={{ fontSize: 12, padding: "6px 12px" }}
+                                                >
+                                                    Reconnect
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {connectionState === "failed" && (
+                                        <div>
+                                            <p style={{ margin: "0 0 10px", color: "#B71C1C", fontWeight: 600 }}>
+                                                {connectionError || connection?.status_reason || "OAuth authorization failed."}
+                                            </p>
+                                            <button
+                                                className="action"
+                                                onClick={() => handleConnect(guide?.slug || "")}
+                                                style={{ fontSize: 12, padding: "6px 12px" }}
+                                            >
+                                                Retry Connection
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {connectionState === "shopify_custom_required" && (
+                                        <div>
+                                            <p style={{ margin: "0 0 8px", fontWeight: 600 }}>
+                                                Custom OAuth Required for Shopify
+                                            </p>
+                                            <p className="muted" style={{ margin: "0 0 10px", fontSize: 13 }}>
+                                                {shopifyInfo?.setup_instructions || "Shopify does not provide Composio-managed credentials. Configure a custom app in Shopify Partners and set COMPOSIO_SHOPIFY_AUTH_CONFIG_ID."}
+                                            </p>
+                                            <Rows
+                                                data={{
+                                                    "Composio Managed Auth": "Unavailable",
+                                                    "Custom Config ID": shopifyInfo?.auth_config_id || "Not configured",
+                                                }}
+                                            />
+                                        </div>
+                                    )}
+                                </div>
                             )}
 
                             {share && (

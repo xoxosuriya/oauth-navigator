@@ -273,32 +273,114 @@ To investigate any application not seeded in the database:
 
 ---
 
-## 10. Honest Limitations & Boundary Conditions
+## 10. Real Composio OAuth Connection Flow
 
-1. **Pre-flight Roadmap Scope (Not a Runtime Auth Broker):**
-   - OAuth Navigator generates pre-flight requirements and code templates. It does not perform live token exchanges, refresh cycles, or store client secrets at runtime.
-2. **Deterministic Retrieval Scope:**
-   - The deterministic engine relies on structured patterns from known documentation platforms. For non-standard portals or gated PDFs, manual review is required. External provider documentation may change over time.
-3. **Render Free Ephemeral Storage Limitation:**
-   - On Render Free Web Services, the container filesystem is ephemeral. While committed seed guides (`seed_guides.json`) persist across all restarts, dynamically generated guides and shared guide permalinks (`guides_store.json`) do NOT survive container spin-downs, restarts, or redeployments.
-4. **Public Cloud Deployment ($0/mo Free Tier Verified):**
-   - **Frontend (Vercel Free):** [https://frontend-six-henna-yfdg99qqrh.vercel.app](https://frontend-six-henna-yfdg99qqrh.vercel.app)
-   - **Backend API (Render Free):** [https://oauth-navigator-api.onrender.com/api/v1](https://oauth-navigator-api.onrender.com/api/v1)
-   - **Interactive API Documentation:** [https://oauth-navigator-api.onrender.com/docs](https://oauth-navigator-api.onrender.com/docs)
-   - *Cold-Start Note:* On Render Free tier, containers spin down after 15 minutes of inactivity; initial cold-start requests may experience a 30-50 second spin-up latency.
-5. **Third-Party Developer Portal Gates:**
-   - Software automation cannot bypass Google Cloud, Slack, or Shopify login challenges or 2FA; human credentials and authorization remain mandatory.
-6. **CASA Assessment Submissions:**
-   - CASA Tier 2 requires a corporate legal entity, commercial agreements, and authorized third-party lab security testing. Automation cannot sign legal agreements.
-7. **Token Expirations in Testing Mode:**
-   - Google OAuth refresh tokens expire after 7 days while in Testing status, requiring re-authorization until production brand verification is approved.
+In addition to pre-flight guidance, OAuth Navigator implements the **live, real-world OAuth connection flow** for developer tools via Composio's API v3.1:
+
+```
+┌────────────────────────────────────────────────────────┐
+│                    React Frontend                      │
+│             (Workspace Guide / Action Bar)             │
+│            User clicks "Connect {AppName}"             │
+└──────────────────────────┬─────────────────────────────┘
+                           │ 1. POST /api/v1/connections/{slug}/start
+                           │    Payload: { user_id: "usr_...", callback_url: "..." }
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│                   FastAPI Backend                      │
+│            ComposioConnectionService                   │
+└──────────────────────────┬─────────────────────────────┘
+                           │ 2. Discovers auth config via Composio v3.1:
+                           │    GET /auth_configs?toolkit_slug={slug}&is_composio_managed=true
+                           │ 3. Generates Connect Link:
+                           │    POST /connected_accounts/link
+                           │    Payload: { auth_config_id, user_id, callback_url }
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│                   Composio v3.1 API                    │
+│             (backend.composio.dev/api/v3.1)            │
+│       Returns: redirect_url, connected_account_id      │
+└──────────────────────────┬─────────────────────────────┘
+                           │ 4. Return to frontend: { redirect_url, connected_account_id }
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│                    React Frontend                      │
+│  • Opens authorization portal (redirect or popup tab)  │
+│  • Stores pending connection in browser session        │
+│  • Polls GET /api/v1/connections/{id}?user_id={uid}    │
+│  • Lifecycle: INITIALIZING → ACTIVE / FAILED / EXPIRED │
+│  • Shows verified status, account ID, and reconnect    │
+└────────────────────────────────────────────────────────┘
+```
+
+### Supported Provider Behaviors
+1. **Slack (Composio-Managed OAuth):**
+   - Automatically resolves `ac_...` managed auth configuration.
+   - Generates a real `https://connect.composio.dev/link/...` authorization URL.
+   - User grants permission in Slack workspace; backend reports `ACTIVE`.
+2. **Gmail (Composio-Managed OAuth):**
+   - Automatically resolves managed Google OAuth configuration.
+   - Generates authorization link directing user to Google OAuth consent screen.
+3. **Shopify (Custom OAuth Required):**
+   - Composio does not provide shared/managed multi-tenant credentials for Shopify.
+   - The connection service explicitly detects this and returns `CUSTOM_OAUTH_REQUIRED` with setup instructions.
+   - If a custom app is registered in Shopify Partners and configured in Composio Dashboard, setting `COMPOSIO_SHOPIFY_AUTH_CONFIG_ID` on the backend unlocks the live connection flow.
+   - No credentials or secrets are ever requested or stored on the frontend.
+
+### Security & Identity Architecture
+- **Browser-Session User Identity:** Every browser session generates a stable, opaque `user_id` (e.g. `usr_...`) persisted in `localStorage`.
+- **Ownership Validation:** All retrieval endpoints (`GET /api/v1/connections/{id}`) strictly validate that the requesting user owns the connected account, preventing cross-tenant enumeration.
+- **Zero Credential Exposure:** Client secrets, API keys, access tokens, and refresh tokens are completely redacted and never returned to the frontend.
+- **Demo Identity Scope Notice:** This demo session identifier provides session isolation suitable for an evaluation take-home demo. It is **not** a replacement for production OAuth2/OIDC multi-tenant identity systems.
 
 ---
 
-## 11. Acceptance Report & Submission Inventory
+## 11. Environment Variables & Setup Guide
 
-- **Full Acceptance Report:** See [acceptance_report.md](acceptance_report.md) for complete DevTools request logs, console audits, and the APM assignment compliance matrix.
-- **Clean Submission Archive:** `oauth-navigator-submission.zip` (397 KB, 108 files matching git commit).
+### Required Environment Variables
+
+| Variable | Scope | Description |
+|---|---|---|
+| `COMPOSIO_API_KEY` | Backend | Composio API key (`ak_...`) used server-side for metadata and connection links. |
+| `COMPOSIO_BASE_URL` | Backend | Composio API v3.1 root (default: `https://backend.composio.dev/api/v3.1`). |
+| `COMPOSIO_SHOPIFY_AUTH_CONFIG_ID` | Backend (Optional) | Custom OAuth config ID for Shopify if registered in Composio. |
+| `ALLOWED_ORIGINS` | Backend | Comma-separated CORS origins (e.g. `https://oauthnavigator.vercel.app,http://localhost:3000`). |
+| `FRONTEND_BASE_URL` | Backend | Production frontend URL for shareable permalinks. |
+| `VITE_OAUTH_API_BASE_URL` | Frontend | Backend API root (`https://oauth-navigator-api.onrender.com/api/v1`). |
+
+### Local Setup (Development)
+```bash
+# 1. Backend
+cd backend
+python -m venv .venv
+# Activate virtual environment (.venv\Scripts\activate on Windows)
+pip install -r requirements.txt
+cp .env.example .env # Add your COMPOSIO_API_KEY
+python run.py
+
+# 2. Frontend
+cd ../frontend
+npm install
+npm run dev # Starts Vite on http://localhost:5173 or :3000
+```
+
+---
+
+## 12. Honest Limitations & Boundary Conditions
+
+1. **Pre-flight Roadmap vs Connection Scope:**
+   - Pre-flight guidance analyzes review policies and generates blueprints. The connection flow initiates real Composio connection links.
+2. **Ephemeral Storage on Render Free Tier:**
+   - Free instances spin down after 15 minutes of inactivity; `seed_guides.json` persists permanently, while live-generated guides and shared IDs are reset on restart unless committed or backed by persistent storage.
+3. **Demo Session Identity:**
+   - Uses browser-generated UUID session tokens with ownership enforcement. In production, integrate enterprise SSO or Auth0.
+
+---
+
+## 13. Acceptance Report & Submission Inventory
+
+- **Full Acceptance Report:** See [acceptance_report.md](acceptance_report.md) for complete audits.
 - **Public GitHub Repository:** [https://github.com/xoxosuriya/oauth-navigator](https://github.com/xoxosuriya/oauth-navigator)
-- **Live Deployed Frontend:** [https://frontend-six-henna-yfdg99qqrh.vercel.app](https://frontend-six-henna-yfdg99qqrh.vercel.app)
-- **Live Deployed Backend:** [https://oauth-navigator-api.onrender.com](https://oauth-navigator-api.onrender.com)
+- **Live Deployed Frontend (Vercel):** [https://oauthnavigator.vercel.app](https://oauthnavigator.vercel.app)
+- **Live Deployed Backend API (Render):** [https://oauth-navigator-api.onrender.com](https://oauth-navigator-api.onrender.com)
+- **Swagger / OpenAPI Documentation:** [https://oauth-navigator-api.onrender.com/docs](https://oauth-navigator-api.onrender.com/docs)
