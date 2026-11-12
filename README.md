@@ -281,13 +281,16 @@ To investigate any application not seeded in the database:
    - The deterministic engine relies on structured patterns from known documentation platforms. For non-standard portals or gated PDFs, manual review is required. External provider documentation may change over time.
 3. **Render Free Ephemeral Storage Limitation:**
    - On Render Free Web Services, the container filesystem is ephemeral. While committed seed guides (`seed_guides.json`) persist across all restarts, dynamically generated guides and shared guide permalinks (`guides_store.json`) do NOT survive container spin-downs, restarts, or redeployments.
-4. **No Public Cloud Deployment (Prior to Authorization):**
-   - The full-stack application currently runs locally (`http://127.0.0.1:3000` and `http://127.0.0.1:8000/api/v1`). The URL `https://only-designer-530683.framer.app/` is solely the published Framer visual reference from which the design was extracted.
+4. **Public Cloud Deployment ($0/mo Free Tier Verified):**
+   - **Frontend (Vercel Free):** [https://frontend-six-henna-yfdg99qqrh.vercel.app](https://frontend-six-henna-yfdg99qqrh.vercel.app)
+   - **Backend API (Render Free):** [https://oauth-navigator-api.onrender.com/api/v1](https://oauth-navigator-api.onrender.com/api/v1)
+   - **Interactive API Documentation:** [https://oauth-navigator-api.onrender.com/docs](https://oauth-navigator-api.onrender.com/docs)
+   - *Cold-Start Note:* On Render Free tier, containers spin down after 15 minutes of inactivity; initial cold-start requests may experience a 30-50 second spin-up latency.
 5. **Third-Party Developer Portal Gates:**
    - Software automation cannot bypass Google Cloud, Slack, or Shopify login challenges or 2FA; human credentials and authorization remain mandatory.
-5. **CASA Assessment Submissions:**
+6. **CASA Assessment Submissions:**
    - CASA Tier 2 requires a corporate legal entity, commercial agreements, and authorized third-party lab security testing. Automation cannot sign legal agreements.
-6. **Token Expirations in Testing Mode:**
+7. **Token Expirations in Testing Mode:**
    - Google OAuth refresh tokens expire after 7 days while in Testing status, requiring re-authorization until production brand verification is approved.
 
 ---
@@ -295,6 +298,7 @@ To investigate any application not seeded in the database:
 ## 11. Acceptance Report & Submission Inventory
 
 - **Full Acceptance Report:** See [acceptance_report.md](acceptance_report.md) for complete DevTools request logs, console audits, and the APM assignment compliance matrix.
-- **Clean Submission Archive:** `oauth-navigator-submission.zip`.
-- **Repository Status:** Local git repository and workspace archive. No public remote repository is currently pushed.
-- **Deployment Status:** Local execution only. No public deployment currently exists.
+- **Clean Submission Archive:** `oauth-navigator-submission.zip` (397 KB, 108 files matching git commit).
+- **Public GitHub Repository:** [https://github.com/xoxosuriya/oauth-navigator](https://github.com/xoxosuriya/oauth-navigator)
+- **Live Deployed Frontend:** [https://frontend-six-henna-yfdg99qqrh.vercel.app](https://frontend-six-henna-yfdg99qqrh.vercel.app)
+- **Live Deployed Backend:** [https://oauth-navigator-api.onrender.com](https://oauth-navigator-api.onrender.com)

@@ -181,12 +181,19 @@ reqid=112  GET     http://127.0.0.1:8000/api/v1/apps?managed_only=false       [2
 
 ---
 
-## 10. Clean Source Package Audit
+## 10. Public Cloud Deployment Verification ($0/mo Free Tier)
 
-- **Archive Path:** `oauth-navigator-submission.zip`
-- **Exclusions Confirmed:** Excluded `.env`, `.venv`, `node_modules`, `dist`, `__pycache__`, `.pytest_cache`, `.git`, `.pyc` files.
-- **Included Assets:** `backend/` source and tests, `frontend/` source, `migration/` scripts, `README.md`, `acceptance_report.md`, `api_contract.md`, `APM Assignment.txt`, and `.env.example` files.
-- **Secret Scan:** Verified 0 API keys or private credentials in archive.
+- **Frontend Deployment (Vercel Free):** [https://frontend-six-henna-yfdg99qqrh.vercel.app](https://frontend-six-henna-yfdg99qqrh.vercel.app)
+  - HTTP Status: `200 OK`
+  - SPA Routing: Fully functional across `/`, `/workspace`, `/guide/:slug`, and all navigation pages.
+  - Latency: ~0.42s initial load.
+- **Backend Deployment (Render Free Web Service):** [https://oauth-navigator-api.onrender.com](https://oauth-navigator-api.onrender.com)
+  - API Health: `https://oauth-navigator-api.onrender.com/api/v1/health` -> `{"status":"healthy"}`
+  - OpenAPI Docs: `https://oauth-navigator-api.onrender.com/docs`
+  - CORS Security: Strictly limited to `https://frontend-six-henna-yfdg99qqrh.vercel.app` and localhost.
+- **Live Integration Tests:** 12/12 live endpoints verified in production (`verify_production_deployment.py`).
+- **Clean Submission Archive:** `oauth-navigator-submission.zip` (397 KB, 108 files matching git commit).
+- **Public GitHub Repository:** [https://github.com/xoxosuriya/oauth-navigator](https://github.com/xoxosuriya/oauth-navigator)
 
 ---
 
@@ -198,9 +205,7 @@ reqid=112  GET     http://127.0.0.1:8000/api/v1/apps?managed_only=false       [2
    - The deterministic engine relies on structured documentation patterns and Composio toolkit metadata. External provider portals may reorganize or update documentation over time, resulting in unverified fields that require human review.
 3. **Render Free Ephemeral Storage Limitation:**
    - On Render Free Web Services, the container filesystem is ephemeral. While committed seed guides (`seed_guides.json`) persist across all restarts, dynamically generated guides and shared guide permalinks (`guides_store.json`) do NOT survive container spin-downs, restarts, or redeployments.
-4. **No Public Live Deployment (Prior to Authorization):**
-   - The React + FastAPI application is currently configured and verified for local execution. There is no active public cloud deployment; the Framer URL (`https://only-designer-530683.framer.app/`) serves solely as the visual design reference.
-5. **Third-Party Developer Portal Gates:**
+4. **Third-Party Developer Portal Gates:**
    - Autonomous agents cannot bypass Google Cloud Console, Slack API, or Shopify Partner portal login authentications or 2FA; these remain human-controlled operations.
-6. **CASA Assessment Submissions:**
+5. **CASA Assessment Submissions:**
    - Submission of the CASA assessment questionnaire and payment for external authorized lab scans requires human legal entity representation.
