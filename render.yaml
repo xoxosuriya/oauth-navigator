@@ -12,6 +12,8 @@ services:
       - key: ENV
         value: production
       - key: ALLOWED_ORIGINS
-        value: https://frontend-six-henna-yfdg99qqrh.vercel.app,https://frontend-h234qf0l3-xoxosuriya.vercel.app,http://localhost:3000,http://127.0.0.1:3000
+        value: https://oauthnavigator.vercel.app,https://frontend-six-henna-yfdg99qqrh.vercel.app,https://frontend-h234qf0l3-xoxosuriya.vercel.app,http://localhost:3000,http://127.0.0.1:3000
       - key: FRONTEND_BASE_URL
-        value: https://frontend-six-henna-yfdg99qqrh.vercel.app
+        value: https://oauthnavigator.vercel.app
+      - key: COMPOSIO_API_KEY
+        sync: false
