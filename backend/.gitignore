@@ -1,0 +1,30 @@
+# Virtual Environments
+.venv/
+env/
+venv/
+ENV/
+*.venv
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Local Environment Variables & Secrets (NEVER COMMIT)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Generated Runtime Storage & Logs
+app/data/guides_store.json
+*.tmp
+*.json.tmp
+*.log
+*.zip
+.DS_Store
+Thumbs.db
+

@@ -1,0 +1,571 @@
+[
+  {
+    "id": "slack-oauth-guide",
+    "slug": "slack",
+    "app_name": "Slack",
+    "app_website": "https://slack.com",
+    "developer_portal_url": "https://api.slack.com/apps",
+    "summary": "Composio provides Managed OAuth for Slack with zero provider registration required. For custom Slack apps, internal single-workspace and unlisted distribution require no Slack review, while public discovery in the Slack App Directory requires formal review.",
+    "difficulty_rating": "VERY_EASY",
+    "composio_status": {
+      "toolkit_slug": "slack",
+      "catalog_status": "IN_CATALOG",
+      "supported_schemes": [
+        {
+          "scheme": "OAUTH2",
+          "is_managed_by_composio": true,
+          "description": "Composio provides and maintains a managed OAuth app for Slack workspace tools."
+        }
+      ],
+      "supports_oauth": true,
+      "managed_oauth_available": true,
+      "custom_oauth_mandatory_for_oauth": false,
+      "alternative_auth_methods": [],
+      "when_to_use_custom_oauth": [
+        "Custom branding and logo on the Slack authorization consent screen",
+        "Dedicated workspace installation rate limit quotas",
+        "Enterprise Grid custom domain instances"
+      ],
+      "composio_redirect_uri": null,
+      "redirect_uri_notes": "Obtained from the Composio Dashboard when creating a custom Slack Auth Config."
+    },
+    "active_effort": {
+      "confidence": "ESTIMATE_HEURISTIC",
+      "status": "ESTABLISHED",
+      "minutes_min": 15,
+      "minutes_max": 30,
+      "basis": "Estimated hands-on developer time to create app manifest, configure bot scopes, and install to a test workspace if choosing the custom OAuth path.",
+      "source_ids": ["src-slack-01"]
+    },
+    "provider_review": {
+      "confidence": "OFFICIAL_DOCS",
+      "status": "ESTABLISHED",
+      "review_required": false,
+      "wait_days_min": null,
+      "wait_days_max": null,
+      "review_type": "NONE",
+      "conditions": "Review is strictly required only if submitting to the public Slack App Directory. Internal workspace installation and unlisted direct install links require no review.",
+      "basis": "Internal integrations install directly into developer workspaces without Slack review.",
+      "source_ids": ["src-slack-02"]
+    },
+    "review_requirements": [
+      {
+        "id": "rev-slack-internal",
+        "title": "Slack Workspace Installation (Internal & Unlisted)",
+        "requirement_type": "NONE",
+        "applicability": "NOT_APPLICABLE",
+        "scope_tier": "NOT_APPLICABLE",
+        "conditions": "Internal workspace installations and unlisted direct install links install immediately upon workspace admin authorization, with zero review required by Slack.",
+        "assurance_level": null,
+        "annual_reassessment_required": false,
+        "confidence": "OFFICIAL_DOCS",
+        "source_ids": ["src-slack-02"]
+      },
+      {
+        "id": "rev-slack-directory",
+        "title": "Slack App Directory Public Marketplace Listing",
+        "requirement_type": "APP_STORE_LISTING_REVIEW",
+        "applicability": "CONDITIONAL",
+        "scope_tier": "ALL_SCOPES",
+        "conditions": "Mandatory only if submitting the app for public discovery in the official Slack App Directory. Turnaround times depend on review queue volume.",
+        "assurance_level": null,
+        "annual_reassessment_required": false,
+        "confidence": "OFFICIAL_DOCS",
+        "source_ids": ["src-slack-02", "src-slack-03"]
+      }
+    ],
+    "blockers": [
+      {
+        "id": "blk-slack-01",
+        "title": "Workspace Admin Approval Barrier",
+        "category": "BUSINESS_OR_LEGAL_ENTITY",
+        "description": "Installing custom Slack apps into corporate workspaces requires workspace administrator permissions or formal app request approval.",
+        "mitigation_or_workaround": "Develop and test using a personal, free Slack development workspace where you have full Owner/Admin rights.",
+        "source_ids": ["src-slack-01"]
+      }
+    ],
+    "setup_steps": [
+      {
+        "step_number": 1,
+        "title": "Use Composio Managed OAuth in Session (Recommended)",
+        "instructions": "Composio provides and maintains the Slack OAuth application. Developers do not need to register an app in api.slack.com or configure redirect URIs. Initialize a session with toolkits: ['slack'] and connect via the Connect Link.",
+        "portal_url": null,
+        "is_automated_by_agent": true,
+        "path_type": "MANAGED_OAUTH",
+        "source_ids": ["src-slack-composio"]
+      },
+      {
+        "step_number": 2,
+        "title": "User Authorizes via Hosted Connect Link",
+        "instructions": "Surface the generated Connect Link in your chat UI or redirect the user. Composio manages token exchange, token refresh, and credential encryption without exposing secrets to your backend.",
+        "portal_url": null,
+        "is_automated_by_agent": false,
+        "path_type": "MANAGED_OAUTH",
+        "source_ids": ["src-slack-composio"]
+      },
+      {
+        "step_number": 3,
+        "title": "Optional Custom App: Create App in Slack Developer Portal",
+        "instructions": "If custom branding or dedicated quotas are required, navigate to https://api.slack.com/apps and click 'Create New App'. Select 'From an app manifest' or 'From scratch' to register the app in your development workspace.",
+        "portal_url": "https://api.slack.com/apps",
+        "is_automated_by_agent": false,
+        "path_type": "CUSTOM_OAUTH",
+        "source_ids": ["src-slack-01"]
+      },
+      {
+        "step_number": 4,
+        "title": "Optional Custom App: Configure Scopes & Composio Redirect URI",
+        "instructions": "Under 'OAuth & Permissions', add necessary bot token scopes (e.g., chat:write, channels:read). Add the redirect URI obtained from your Composio Dashboard Auth Config page. Copy Client ID and Secret into Composio.",
+        "portal_url": "https://api.slack.com/apps",
+        "is_automated_by_agent": false,
+        "path_type": "CUSTOM_OAUTH",
+        "source_ids": ["src-slack-01"]
+      }
+    ],
+    "human_agent_boundary": {
+      "what_agent_can_automate": [
+        "Generating Composio session initialization code for managed or custom auth",
+        "Drafting YAML/JSON Slack App Manifests with exact scopes",
+        "Generating the Composio Auth Config JSON payload"
+      ],
+      "what_human_must_do": [
+        "Logging into Slack API portal with workspace admin account (if using custom OAuth)",
+        "Approving app installation inside the destination workspace",
+        "Copying Client ID and Secret into Composio Dashboard (if using custom OAuth)"
+      ]
+    },
+    "code_snippets": {
+      "session_create_managed": "const session = await composio.create(userId, { toolkits: ['slack'] });",
+      "session_create_custom": "const session = await composio.create(userId, { authConfigs: { slack: 'ac_custom_slack' } });",
+      "auth_config_request_payload": "{\n  \"toolkit\": \"slack\",\n  \"auth_scheme\": \"OAUTH2\",\n  \"credentials\": {\n    \"client_id\": \"YOUR_SLACK_CLIENT_ID\",\n    \"client_secret\": \"YOUR_SLACK_CLIENT_SECRET\"\n  }\n}"
+    },
+    "sources": [
+      {
+        "id": "src-slack-composio",
+        "title": "Composio Documentation: Managed OAuth",
+        "url": "https://docs.composio.dev/toolkits/managed-auth",
+        "page_section": "Managed OAuth apps",
+        "evidence_excerpt": "Composio can provide the OAuth app that your users authorize when they connect a toolkit. You do not need to register an OAuth app or supply its client ID and client secret.",
+        "retrieval_status": "CURATED_STATIC",
+        "confidence": "OFFICIAL_DOCS",
+        "notes": "Curated citation from Composio official managed auth docs."
+      },
+      {
+        "id": "src-slack-01",
+        "title": "Slack API: Quickstart Guide",
+        "url": "https://api.slack.com/start/quickstart",
+        "page_section": "Create your app",
+        "evidence_excerpt": "Navigate to api.slack.com/apps and click 'Create New App'. Choose 'From an app manifest' or 'From scratch' to start creating your app in your development workspace.",
+        "retrieval_status": "CURATED_STATIC",
+        "confidence": "OFFICIAL_DOCS",
+        "notes": "Curated citation from official Slack developer quickstart guide."
+      },
+      {
+        "id": "src-slack-02",
+        "title": "Slack API: Distributing Slack Apps",
+        "url": "https://api.slack.com/start/distributing",
+        "page_section": "Distributing your app",
+        "evidence_excerpt": "You can keep your app unlisted and share the direct install link with other teams without submitting to the App Directory. Only apps intended for public discovery in the Slack App Directory must be submitted for review.",
+        "retrieval_status": "CURATED_STATIC",
+        "confidence": "OFFICIAL_DOCS",
+        "notes": "Curated citation regarding internal vs unlisted vs marketplace distribution."
+      },
+      {
+        "id": "src-slack-03",
+        "title": "Slack API: App Directory Guidelines",
+        "url": "https://api.slack.com/docs/slack-marketplace/guidelines",
+        "page_section": "Review Guidelines",
+        "evidence_excerpt": "Before your app is listed in the Slack App Directory, our team reviews it to ensure quality and security. Review turnaround times vary based on submission volume.",
+        "retrieval_status": "CURATED_STATIC",
+        "confidence": "OFFICIAL_DOCS",
+        "notes": "Curated citation on App Directory review turnaround policies."
+      }
+    ],
+    "created_at": "2026-11-05T00:15:00Z",
+    "updated_at": "2026-11-05T01:10:00Z"
+  },
+  {
+    "id": "shopify-oauth-guide",
+    "slug": "shopify",
+    "app_name": "Shopify",
+    "app_website": "https://shopify.com",
+    "developer_portal_url": "https://dev.shopify.com",
+    "summary": "Composio requires a Custom OAuth Config for Shopify (no managed OAuth app provided). For API-only integrations like Composio, developers create apps directly in the Shopify Dev Dashboard without scaffolding UI. Custom merchant apps install without review, whereas public Shopify App Store listings require automated and human review.",
+    "difficulty_rating": "MODERATE",
+    "composio_status": {
+      "toolkit_slug": "shopify",
+      "catalog_status": "IN_CATALOG",
+      "supported_schemes": [
+        {
+          "scheme": "OAUTH2",
+          "is_managed_by_composio": false,
+          "description": "Composio supports Shopify via Custom Auth Config (developer brings their own OAuth Client ID and Secret)."
+        }
+      ],
+      "supports_oauth": true,
+      "managed_oauth_available": false,
+      "custom_oauth_mandatory_for_oauth": true,
+      "alternative_auth_methods": [],
+      "when_to_use_custom_oauth": [
+        "Custom OAuth is mandatory because Composio does not provide a managed OAuth app for Shopify"
+      ],
+      "composio_redirect_uri": null,
+      "redirect_uri_notes": "Obtained from the Composio Dashboard during Shopify Auth Config setup."
+    },
+    "active_effort": {
+      "confidence": "ESTIMATE_HEURISTIC",
+      "status": "ESTABLISHED",
+      "minutes_min": 20,
+      "minutes_max": 45,
+      "basis": "Estimated hands-on developer time to create an API-only app in Shopify Dev Dashboard, configure scopes, and register client credentials in Composio.",
+      "source_ids": ["src-shopify-01"]
+    },
+    "provider_review": {
+      "confidence": "OFFICIAL_DOCS",
+      "status": "ESTABLISHED",
+      "review_required": false,
+      "wait_days_min": null,
+      "wait_days_max": null,
+      "review_type": "NONE",
+      "conditions": "Review is strictly required only if publishing to the public Shopify App Store. Custom merchant/organization apps install directly without App Store review.",
+      "basis": "Single-merchant custom apps install directly through Dev Dashboard / store admin without Shopify App Store review.",
+      "source_ids": ["src-shopify-03"]
+    },
+    "review_requirements": [
+      {
+        "id": "rev-shopify-custom",
+        "title": "Custom Merchant App Direct Installation",
+        "requirement_type": "NONE",
+        "applicability": "NOT_APPLICABLE",
+        "scope_tier": "NOT_APPLICABLE",
+        "conditions": "Custom apps created for a specific merchant store or organization install directly without Shopify App Store review.",
+        "assurance_level": null,
+        "annual_reassessment_required": false,
+        "confidence": "OFFICIAL_DOCS",
+        "source_ids": ["src-shopify-03"]
+      },
+      {
+        "id": "rev-shopify-appstore",
+        "title": "Shopify App Store Public Distribution",
+        "requirement_type": "APP_STORE_LISTING_REVIEW",
+        "applicability": "CONDITIONAL",
+        "scope_tier": "ALL_SCOPES",
+        "conditions": "Mandatory only if distributing publicly to arbitrary merchants through the Shopify App Store. Requires automated security and API compliance scans followed by human staff review.",
+        "assurance_level": null,
+        "annual_reassessment_required": false,
+        "confidence": "OFFICIAL_DOCS",
+        "source_ids": ["src-shopify-03"]
+      }
+    ],
+    "blockers": [
+      {
+        "id": "blk-shopify-01",
+        "title": "Shopify Partner / Dev Account Required",
+        "category": "BUSINESS_OR_LEGAL_ENTITY",
+        "description": "Apps must be created through the Shopify Dev Dashboard or Partner Dashboard at dev.shopify.com; they cannot be created directly from standard merchant admin panels.",
+        "mitigation_or_workaround": "Sign up for a free Shopify developer account at dev.shopify.com or partners.shopify.com.",
+        "source_ids": ["src-shopify-01"]
+      },
+      {
+        "id": "blk-shopify-02",
+        "title": "Strict HTTPS Requirement for Redirect URLs",
+        "category": "DOMAIN_VERIFICATION",
+        "description": "Shopify strictly enforces valid HTTPS SSL/TLS endpoints for all OAuth redirect URIs.",
+        "mitigation_or_workaround": "Composio provides a fully managed, secure HTTPS redirect endpoint for your Auth Config.",
+        "source_ids": ["src-shopify-01"]
+      }
+    ],
+    "setup_steps": [
+      {
+        "step_number": 1,
+        "title": "Access Shopify Dev Dashboard",
+        "instructions": "Log in to https://dev.shopify.com (or the Partner Dashboard) and open the Apps section.",
+        "portal_url": "https://dev.shopify.com",
+        "is_automated_by_agent": false,
+        "path_type": "CUSTOM_OAUTH",
+        "source_ids": ["src-shopify-01"]
+      },
+      {
+        "step_number": 2,
+        "title": "Create API-Only App in Dev Dashboard (Recommended)",
+        "instructions": "For backend tool integrations like Composio, create an app using the Dev Dashboard. Click 'Create App' -> 'Create app manually'. If building a full-stack embedded app with frontend extensions instead, use the Shopify CLI via 'shopify app init'.",
+        "portal_url": "https://dev.shopify.com",
+        "is_automated_by_agent": false,
+        "path_type": "CUSTOM_OAUTH",
+        "source_ids": ["src-shopify-01", "src-shopify-02"]
+      },
+      {
+        "step_number": 3,
+        "title": "Configure Redirect URLs & Register Credentials in Composio",
+        "instructions": "Under App Configuration, add the redirect URI from your Composio Dashboard. Copy the Client ID and Client Secret into the Composio Shopify Auth Config.",
+        "portal_url": "https://dev.shopify.com",
+        "is_automated_by_agent": false,
+        "path_type": "CUSTOM_OAUTH",
+        "source_ids": ["src-shopify-01"]
+      }
+    ],
+    "human_agent_boundary": {
+      "what_agent_can_automate": [
+        "Generating Composio Auth Config definition payload for Shopify",
+        "Validating scopes matching store tools (e.g., read_products, write_orders)",
+        "Formatting session initialization code with auth_configs"
+      ],
+      "what_human_must_do": [
+        "Logging into Shopify Dev Dashboard with developer credentials",
+        "Authorizing installation into the merchant test store",
+        "Entering Client ID and Client Secret into Composio Dashboard"
+      ]
+    },
+    "code_snippets": {
+      "session_create_managed": null,
+      "session_create_custom": "const session = await composio.create(userId, {\n  authConfigs: { shopify: 'ac_custom_shopify' }\n});",
+      "auth_config_request_payload": "{\n  \"toolkit\": \"shopify\",\n  \"auth_scheme\": \"OAUTH2\",\n  \"credentials\": {\n    \"client_id\": \"YOUR_SHOPIFY_API_KEY\",\n    \"client_secret\": \"YOUR_SHOPIFY_API_SECRET\"\n  }\n}"
+    },
+    "sources": [
+      {
+        "id": "src-shopify-01",
+        "title": "Shopify Dev: Create apps using Dev Dashboard",
+        "url": "https://shopify.dev/docs/apps/build/dev-dashboard/create-apps-using-dev-dashboard",
+        "page_section": "Create apps using Dev Dashboard",
+        "evidence_excerpt": "If you're building an API-only app, or you want to configure an app before writing code, then you can create an app using the Dev Dashboard.",
+        "retrieval_status": "CURATED_STATIC",
+        "confidence": "OFFICIAL_DOCS",
+        "notes": "Official Shopify Developer documentation for Dev Dashboard workflow."
+      },
+      {
+        "id": "src-shopify-02",
+        "title": "Shopify Dev: CLI for apps",
+        "url": "https://shopify.dev/docs/apps/build/cli-for-apps",
+        "page_section": "CLI for apps",
+        "evidence_excerpt": "Use the Shopify CLI to create, build, and deploy apps. Run 'shopify app init' to scaffold a new app project.",
+        "retrieval_status": "CURATED_STATIC",
+        "confidence": "OFFICIAL_DOCS",
+        "notes": "Official Shopify Developer documentation for CLI scaffolding."
+      },
+      {
+        "id": "src-shopify-03",
+        "title": "Shopify Dev: App Distribution Options",
+        "url": "https://shopify.dev/docs/apps/launch/distribution",
+        "page_section": "Custom apps vs Public apps",
+        "evidence_excerpt": "Custom apps are built for a single merchant or company and do not require Shopify App Store review. Public apps must pass Shopify App Store review before they can be installed by any merchant.",
+        "retrieval_status": "CURATED_STATIC",
+        "confidence": "OFFICIAL_DOCS",
+        "notes": "Official guidelines on custom merchant apps vs public store apps."
+      }
+    ],
+    "created_at": "2026-11-05T00:15:00Z",
+    "updated_at": "2026-11-05T01:10:00Z"
+  },
+  {
+    "id": "gmail-oauth-guide",
+    "slug": "gmail",
+    "app_name": "Gmail / Google Workspace",
+    "app_website": "https://workspace.google.com",
+    "developer_portal_url": "https://console.cloud.google.com/apis/credentials",
+    "summary": "Composio provides Managed OAuth for Gmail out-of-the-box. If building a custom Google Cloud app, Testing mode supports up to 100 users without review (tokens expire after 7 days). For production, sensitive scopes require OAuth verification, and restricted scopes accessing data from third-party servers require independent CASA assessment with annual re-verification.",
+    "difficulty_rating": "COMPLEX",
+    "composio_status": {
+      "toolkit_slug": "gmail",
+      "catalog_status": "IN_CATALOG",
+      "supported_schemes": [
+        {
+          "scheme": "OAUTH2",
+          "is_managed_by_composio": true,
+          "description": "Composio provides a managed OAuth app for Gmail tools."
+        }
+      ],
+      "supports_oauth": true,
+      "managed_oauth_available": true,
+      "custom_oauth_mandatory_for_oauth": false,
+      "alternative_auth_methods": [],
+      "when_to_use_custom_oauth": [
+        "Company branding on the Google OAuth consent screen",
+        "Custom or restricted Gmail API scopes beyond standard defaults",
+        "Dedicated Google Cloud API quota limits"
+      ],
+      "composio_redirect_uri": null,
+      "redirect_uri_notes": "Obtained from the Composio Dashboard when setting up a custom Google Auth Config."
+    },
+    "active_effort": {
+      "confidence": "ESTIMATE_HEURISTIC",
+      "status": "ESTABLISHED",
+      "minutes_min": 45,
+      "minutes_max": 90,
+      "basis": "Estimated hands-on developer time to set up GCP project, OAuth consent screen, configure scopes, and add test user accounts if choosing the custom OAuth path.",
+      "source_ids": ["src-google-01"]
+    },
+    "provider_review": {
+      "confidence": "ESTIMATE_HEURISTIC",
+      "status": "NOT_STATED",
+      "review_required": true,
+      "wait_days_min": null,
+      "wait_days_max": null,
+      "review_type": "SECURITY_ASSESSMENT",
+      "conditions": "Review requirements depend on scope sensitivity and data access architecture. Sensitive scopes require OAuth verification for production; restricted scopes accessing data from third-party servers additionally require CASA assessment.",
+      "basis": "Google documentation does not state a guaranteed calendar SLA for OAuth verification or CASA security audits, as turnaround depends on questionnaire compliance and remediation.",
+      "source_ids": ["src-google-01", "src-google-03", "src-google-04"]
+    },
+    "review_requirements": [
+      {
+        "id": "rev-google-oauth",
+        "title": "Google OAuth Brand Verification",
+        "requirement_type": "OAUTH_VERIFICATION",
+        "applicability": "CONDITIONAL",
+        "scope_tier": "SENSITIVE",
+        "conditions": "Mandatory for production applications requesting sensitive or restricted Google API scopes. Exempt for internal users within a Google Workspace organization or in Testing status with up to 100 designated test accounts (tokens expire after 7 days in Testing).",
+        "assurance_level": null,
+        "annual_reassessment_required": false,
+        "confidence": "OFFICIAL_DOCS",
+        "source_ids": ["src-google-01", "src-google-03"]
+      },
+      {
+        "id": "rev-google-casa",
+        "title": "Cloud Application Security Assessment (CASA)",
+        "requirement_type": "SECURITY_ASSESSMENT",
+        "applicability": "CONDITIONAL",
+        "scope_tier": "RESTRICTED",
+        "conditions": "Applies conditionally only when restricted scopes (such as Gmail read/send) are accessed from or stored on third-party application servers or cloud infrastructure. Not required for client-only/local processing or non-restricted scopes. Does not mandate Tier 2 for every app; Google uses risk-based assurance levels based on data risk.",
+        "assurance_level": "Risk-based assurance levels (e.g. automated scan vs. comprehensive lab assessment based on application architectural risk)",
+        "annual_reassessment_required": true,
+        "confidence": "OFFICIAL_DOCS",
+        "source_ids": ["src-google-03", "src-google-04"]
+      }
+    ],
+    "blockers": [
+      {
+        "id": "blk-google-01",
+        "title": "CASA Security Assessment for Restricted Scopes",
+        "category": "SECURITY_ASSESSMENT",
+        "description": "Applications accessing restricted scopes (such as Gmail read/send access) from or through third-party servers must undergo an independent Cloud Application Security Assessment (CASA) based on risk assurance levels, with mandatory annual reassessment.",
+        "mitigation_or_workaround": "Use Composio Managed Auth during prototyping and development to bypass provider registration, or restrict custom scopes to non-restricted APIs.",
+        "source_ids": ["src-google-03", "src-google-04"]
+      },
+      {
+        "id": "blk-google-02",
+        "title": "Testing Mode 7-Day Authorization Expiration",
+        "category": "OTHER",
+        "description": "For Google Cloud projects in 'Testing' publishing status, OAuth refresh tokens and user authorizations expire automatically after seven days, requiring users to re-authenticate weekly.",
+        "mitigation_or_workaround": "Anticipate weekly re-authentication during development, or transition to internal-use / verified status for persistent access.",
+        "source_ids": ["src-google-02"]
+      },
+      {
+        "id": "blk-google-03",
+        "title": "Unverified App Warning Screen",
+        "category": "OTHER",
+        "description": "Apps in Testing status trigger a prominent 'Google hasn't verified this app' warning screen upon user sign-in.",
+        "mitigation_or_workaround": "Users must manually click 'Advanced' -> 'Go to [App Name] (unsafe)' during development and testing.",
+        "source_ids": ["src-google-01"]
+      }
+    ],
+    "setup_steps": [
+      {
+        "step_number": 1,
+        "title": "Use Composio Managed OAuth in Session (Recommended)",
+        "instructions": "Composio maintains the Google OAuth app for Gmail. Developers do not need to create a GCP project or configure consent screens. Call composio.create(userId, { toolkits: ['gmail'] }) to authenticate users instantly.",
+        "portal_url": null,
+        "is_automated_by_agent": true,
+        "path_type": "MANAGED_OAUTH",
+        "source_ids": ["src-google-composio"]
+      },
+      {
+        "step_number": 2,
+        "title": "Optional Custom App: Create GCP Project & Enable Gmail API",
+        "instructions": "Go to https://console.cloud.google.com and create a project. Enable the 'Gmail API' under APIs & Services -> Library.",
+        "portal_url": "https://console.cloud.google.com",
+        "is_automated_by_agent": false,
+        "path_type": "CUSTOM_OAUTH",
+        "source_ids": ["src-google-01"]
+      },
+      {
+        "step_number": 3,
+        "title": "Optional Custom App: Configure OAuth Consent Screen & Test Users",
+        "instructions": "Set user type to External, fill in app name and contact email. Add authorized test user accounts (tokens expire after 7 days in Testing mode).",
+        "portal_url": "https://console.cloud.google.com/apis/credentials/consent",
+        "is_automated_by_agent": false,
+        "path_type": "CUSTOM_OAUTH",
+        "source_ids": ["src-google-01", "src-google-02"]
+      },
+      {
+        "step_number": 4,
+        "title": "Optional Custom App: Create Credentials & Add Composio Redirect URI",
+        "instructions": "Create 'OAuth client ID' of type 'Web application'. Add the redirect URI from your Composio Dashboard. Copy Client ID and Secret into Composio Auth Config.",
+        "portal_url": "https://console.cloud.google.com/apis/credentials",
+        "is_automated_by_agent": false,
+        "path_type": "CUSTOM_OAUTH",
+        "source_ids": ["src-google-01"]
+      }
+    ],
+    "human_agent_boundary": {
+      "what_agent_can_automate": [
+        "Generating Composio session initialization code for managed or custom auth",
+        "Generating the Composio Auth Config JSON payload for Gmail",
+        "Validating scopes matching tool actions (e.g. GMAIL_SEND_EMAIL, GMAIL_FETCH_EMAILS)"
+      ],
+      "what_human_must_do": [
+        "Google Cloud project creation and billing setup",
+        "Domain verification through Google Search Console (for public production)",
+        "Submitting verification video showing client ID and OAuth consent flow",
+        "Completing CASA security questionnaires and lab assessment (if accessing restricted scopes via server)"
+      ]
+    },
+    "code_snippets": {
+      "session_create_managed": "const session = await composio.create(userId, { toolkits: ['gmail'] });",
+      "session_create_custom": "const session = await composio.create(userId, {\n  authConfigs: { gmail: 'ac_custom_gmail' }\n});",
+      "auth_config_request_payload": "{\n  \"toolkit\": \"gmail\",\n  \"auth_scheme\": \"OAUTH2\",\n  \"credentials\": {\n    \"client_id\": \"YOUR_GOOGLE_CLIENT_ID\",\n    \"client_secret\": \"YOUR_GOOGLE_CLIENT_SECRET\"\n  }\n}"
+    },
+    "sources": [
+      {
+        "id": "src-google-composio",
+        "title": "Composio Documentation: Managed OAuth",
+        "url": "https://docs.composio.dev/toolkits/managed-auth",
+        "page_section": "Composio-managed OAuth available",
+        "evidence_excerpt": "Composio can provide the OAuth app that your users authorize when they connect a toolkit. You do not need to register an OAuth app or supply its client ID and client secret.",
+        "retrieval_status": "CURATED_STATIC",
+        "confidence": "OFFICIAL_DOCS",
+        "notes": "Curated citation from official Composio managed auth docs."
+      },
+      {
+        "id": "src-google-01",
+        "title": "Google Cloud: OAuth API Verification FAQ",
+        "url": "https://support.google.com/cloud/answer/10311685",
+        "page_section": "Verification exceptions",
+        "evidence_excerpt": "You do not need to verify your app if it is only used by internal users within your Google Workspace organization, or if your app is in 'Testing' publishing status with no more than 100 test users.",
+        "retrieval_status": "CURATED_STATIC",
+        "confidence": "OFFICIAL_DOCS",
+        "notes": "Official Google Cloud Identity support article on verification exceptions."
+      },
+      {
+        "id": "src-google-02",
+        "title": "Google Cloud: OAuth User Cap & Testing Expiration",
+        "url": "https://support.google.com/cloud/answer/13465431",
+        "page_section": "Testing publishing status",
+        "evidence_excerpt": "Google Cloud projects with an OAuth consent screen configured for an external user type and a publishing status of 'Testing' have authorization tokens that expire after seven days.",
+        "retrieval_status": "CURATED_STATIC",
+        "confidence": "OFFICIAL_DOCS",
+        "notes": "Official Google Cloud article on 7-day token expiration in testing mode."
+      },
+      {
+        "id": "src-google-03",
+        "title": "Google Developers: Restricted Scope Verification",
+        "url": "https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification",
+        "page_section": "Security assessment for restricted scopes",
+        "evidence_excerpt": "If your app accesses restricted scopes from or through third-party servers, you must undergo a Cloud Application Security Assessment (CASA). Annual re-verification is required for continued production access.",
+        "retrieval_status": "CURATED_STATIC",
+        "confidence": "OFFICIAL_DOCS",
+        "notes": "Official Google developer policy for restricted scope verification and CASA."
+      },
+      {
+        "id": "src-google-04",
+        "title": "Google Cloud: CASA Framework Overview",
+        "url": "https://support.google.com/cloud/answer/15549945",
+        "page_section": "Assurance tiers and requirements",
+        "evidence_excerpt": "CASA uses risk-based assurance levels to assess applications. The specific assessment tier depends on whether data is processed on an application server and the risk profile of requested scopes.",
+        "retrieval_status": "CURATED_STATIC",
+        "confidence": "OFFICIAL_DOCS",
+        "notes": "Official Google Cloud guide on CASA risk-based assurance levels."
+      }
+    ],
+    "created_at": "2026-11-05T00:15:00Z",
+    "updated_at": "2026-11-05T01:10:00Z"
+  }
+]

@@ -1,0 +1,115 @@
+# ==================================================
+# PYTHON VIRTUAL ENVIRONMENTS
+# ==================================================
+.venv/
+venv/
+env/
+ENV/
+*.venv
+
+# ==================================================
+# PYTHON BYTECODE AND CACHES
+# ==================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ==================================================
+# NODE / FRONTEND GENERATED FILES
+# ==================================================
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+coverage/
+*.tsbuildinfo
+
+# ==================================================
+# ENVIRONMENT FILES AND SECRETS
+# ==================================================
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Allow safe example templates
+!.env.example
+!**/.env.example
+
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# ==================================================
+# RUNTIME DATA AND LOGS
+# ==================================================
+backend/app/data/guides_store.json
+app/data/guides_store.json
+*.tmp
+*.log
+logs/
+**/logs/
+
+# ==================================================
+# PRIVATE INTERNAL PROJECT DOCUMENTS
+# ==================================================
+api_contract.md
+oauth-navigator-handoff.md
+APM Assignment.txt
+Auth Config.txt
+Authentication.txt
+Configuring Sessions.txt
+Managed OAuth apps.txt
+Managed vs custom auth.txt
+Manual Auth Management.txt
+What is a session.txt
+milestone_3_7_backend_acceptance_report.md
+
+# ==================================================
+# PRIVATE EXTRACTION AND MIGRATION DATA
+# ==================================================
+migration/
+scratch/
+.tempmediaStorage/
+demo_frontend/
+framer-original/EXTRACTION_ISSUES.md
+**/framer-original/EXTRACTION_ISSUES.md
+framer-original/COMPONENT_DEPENDENCIES.md
+**/framer-original/COMPONENT_DEPENDENCIES.md
+
+# ==================================================
+# ARCHIVES AND TEMPORARY PACKAGES
+# ==================================================
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+
+# ==================================================
+# IDE AND OPERATING SYSTEM FILES
+# ==================================================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.lnk
+*.url
+
+# ==================================================
+# LOCAL DATABASES AND TEMPORARY FILES
+# ==================================================
+*.sqlite
+*.sqlite3
+*.db
+*.bak
+*.old
