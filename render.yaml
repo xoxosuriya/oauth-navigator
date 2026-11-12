@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: oauth-navigator-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    plan: free
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: ENV
+        value: production
+      - key: ALLOWED_ORIGINS
+        value: https://frontend-six-henna-yfdg99qqrh.vercel.app,https://frontend-h234qf0l3-xoxosuriya.vercel.app,http://localhost:3000,http://127.0.0.1:3000
+      - key: FRONTEND_BASE_URL
+        value: https://frontend-six-henna-yfdg99qqrh.vercel.app
