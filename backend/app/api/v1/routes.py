@@ -57,16 +57,16 @@ api_router = APIRouter()
 async def get_or_create_session_endpoint(
     http_request: Request,
     http_response: Response,
-    legacy_id: Optional[str] = Query(default=None, description="Optional legacy user ID from previous browser state to sign"),
 ):
     """
-    Issues or verifies a cryptographically signed anonymous session token (HMAC-SHA256).
+    Issues or verifies a cryptographically signed anonymous session.
     Sets an HttpOnly, Secure, SameSite cookie and returns session metadata.
+    Never adopts or signs arbitrary caller-provided identifiers.
     """
-    info = resolve_or_create_session(http_request, http_response, legacy_user_id=legacy_id)
+    info = resolve_or_create_session(http_request, http_response)
     return {
+        "status": "authenticated",
         "session_id": info.session_id,
-        "token": info.token,
         "is_new": info.is_new,
     }
 
@@ -344,30 +344,18 @@ async def start_connection(
                 headers={"Retry-After": str(retry_after or 60)},
             )
 
-    # Resolve authenticated session identity (HMAC-SHA256 verified)
+    # Resolve authenticated session identity (strictly server-issued and verified)
     session_user_id = await get_authenticated_session(http_request, http_response)
 
-    # If client passed an explicit user_id that differs from session identity, verify or bind securely
-    effective_user_id = session_user_id
-    if payload.user_id and payload.user_id.strip():
-        req_uid = payload.user_id.strip()
-        verified_raw = verify_session_token(req_uid)
-        if verified_raw:
-            effective_user_id = verified_raw
-        elif session_user_id.startswith("anon_"):
-            # Transparently bind to client-provided session identifier on first connect
-            effective_user_id = req_uid
-        elif req_uid == session_user_id:
-            effective_user_id = session_user_id
-        else:
-            logger.warning(
-                f"[Security] Spoofed user_id rejected: '{req_uid}' != authenticated '{session_user_id}'. Using authenticated session."
-            )
-            effective_user_id = session_user_id
+    # Log any mismatching client-supplied user ID; strictly enforce server session identity
+    if payload.user_id and payload.user_id.strip() and payload.user_id.strip() != session_user_id:
+        logger.warning(
+            f"[Security] Client-supplied user_id '{payload.user_id.strip()}' does not match session '{session_user_id}'. Ignored."
+        )
 
     return await composio_connection_service.create_connection_link(
         toolkit_slug=clean_slug,
-        user_id=effective_user_id,
+        user_id=session_user_id,
         alias=payload.alias,
         callback_url=payload.callback_url,
         force_new=bool(payload.force_new),
@@ -383,28 +371,23 @@ async def get_connection_status(
     connected_account_id: str,
     http_request: Request = None,
     http_response: Response = None,
-    user_id: Optional[str] = Query(default=None, description="Owner user ID for session validation"),
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-ID", description="Owner user ID header"),
+    user_id: Optional[str] = Query(default=None, description="Optional caller user ID (ignored, session-derived)"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-ID", description="Optional header (ignored, session-derived)"),
 ):
     """
     Retrieves the real-time status of a Composio connected account.
-    Enforces user session ownership and redacts all secrets/tokens.
+    Enforces user session ownership strictly against authenticated session identity.
+    Returns HTTP 404 if the account belongs to another session (prevents account enumeration).
     """
     clean_account_id = connected_account_id.strip()
     if not clean_account_id or any(p in clean_account_id for p in ("..", "/", "\\", "\0")):
         raise HTTPException(status_code=400, detail="Invalid connected account identifier format.")
 
     session_user_id = await get_authenticated_session(http_request, http_response)
-    effective_user_id = user_id or x_user_id or session_user_id
-
-    # If client passed a token, verify it
-    verified_token = verify_session_token(effective_user_id)
-    if verified_token:
-        effective_user_id = verified_token
 
     return await composio_connection_service.get_connected_account(
         connected_account_id=clean_account_id,
-        user_id=effective_user_id.strip(),
+        user_id=session_user_id,
     )
 
 
@@ -416,22 +399,17 @@ async def get_connection_status(
 async def list_user_connections(
     http_request: Request = None,
     http_response: Response = None,
-    user_id: Optional[str] = Query(default=None, description="Owner user ID for session validation"),
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-ID", description="Owner user ID header"),
+    user_id: Optional[str] = Query(default=None, description="Optional caller user ID (ignored, session-derived)"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-ID", description="Optional header (ignored, session-derived)"),
     toolkit_slug: Optional[str] = Query(default=None, description="Filter by toolkit slug"),
 ):
     """
     Lists all connected accounts owned by the current browser session.
-    Bound to the authenticated session identity.
+    Bound strictly to the authenticated session identity.
     """
     session_user_id = await get_authenticated_session(http_request, http_response)
-    effective_user_id = user_id or x_user_id or session_user_id
-
-    verified_token = verify_session_token(effective_user_id)
-    if verified_token:
-        effective_user_id = verified_token
 
     return await composio_connection_service.list_user_connections(
-        user_id=effective_user_id.strip(),
+        user_id=session_user_id,
         toolkit_slug=toolkit_slug.strip() if toolkit_slug else None,
     )

@@ -560,7 +560,7 @@ class TestDocFetcherAndSecurity(unittest.TestCase):
                     resp_huge = await client.post(
                         "/api/v1/research",
                         content=b'{"app_name": "Test"}',
-                        headers={"content-length": "500000", "content-type": "application/json"},
+                        headers={"content-length": str(settings.MAX_REQUEST_BODY_BYTES + 5000), "content-type": "application/json"},
                     )
                     self.assertEqual(resp_huge.status_code, 413)
                     self.assertIn("too large", resp_huge.json()["detail"].lower())

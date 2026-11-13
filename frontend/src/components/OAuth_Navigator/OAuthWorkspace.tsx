@@ -420,8 +420,8 @@ export default function OAuthWorkspace({
 
     React.useEffect(() => {
         if (typeof window === "undefined" || embedded) return
-        // Initialize or synchronize cryptographically signed session on mount
-        client.session(userId).catch(() => {})
+        // Initialize or synchronize cryptographically signed session on mount via HttpOnly cookie
+        client.session().catch(() => {})
 
         const params = new URLSearchParams(window.location.search)
         const connParam = params.get("connection_id") || params.get("connected_account_id")

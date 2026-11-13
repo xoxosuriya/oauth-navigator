@@ -16,6 +16,7 @@ if sys.platform == "win32":
 
 from app.main import app
 from app.core.config import settings
+from app.core.session import sign_session_id
 from app.models.connection import ConnectionStartRequest
 from app.services.composio_connection import (
     ComposioConnectionService,
@@ -408,7 +409,8 @@ class TestComposioConnections(unittest.TestCase):
             composio_connection_service._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
             transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            cookies = {"oauth_nav_session": sign_session_id("usr_asgi_test")}
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver", cookies=cookies) as client:
                 # 1. Start connection (new connection created)
                 res_start = await client.post(
                     "/api/v1/connections/slack/start",

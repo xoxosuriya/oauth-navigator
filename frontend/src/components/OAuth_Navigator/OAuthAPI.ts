@@ -68,14 +68,11 @@ export function service(base?: string) {
 
         const timer = setTimeout(abort, 120000)
 
-        const sessionToken = typeof window !== "undefined" ? localStorage.getItem("oauth_nav_session_token") : null
-
         try {
 
             const headers: Record<string, string> = {
                 Accept: "application/json",
                 ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-                ...(sessionToken ? { "X-Session-Token": sessionToken } : {}),
             }
 
             const res = await fetch(root + path, {
@@ -91,11 +88,6 @@ export function service(base?: string) {
                 signal: controller.signal,
 
             })
-
-            const newSessionToken = res.headers.get("X-Session-Token")
-            if (newSessionToken && typeof window !== "undefined") {
-                localStorage.setItem("oauth_nav_session_token", newSessionToken)
-            }
 
             const data = await res.json().catch(() => null)
 
@@ -145,8 +137,8 @@ export function service(base?: string) {
 
     return {
 
-        session: (legacyId?: string, s?: AbortSignal) =>
-            request("/session" + (legacyId ? "?legacy_id=" + encodeURIComponent(legacyId) : ""), undefined, s),
+        session: (s?: AbortSignal) =>
+            request("/session", undefined, s),
 
         health: (s?: AbortSignal) => request("/health", undefined, s),
 
@@ -202,7 +194,7 @@ export function service(base?: string) {
 
         startConnection: (
             slug: string,
-            userId: string,
+            _userId?: string,
             alias?: string,
             callbackUrl?: string,
             forceNew?: boolean,
@@ -211,7 +203,6 @@ export function service(base?: string) {
             request(
                 "/connections/" + encodeURIComponent(slug) + "/start",
                 {
-                    user_id: userId,
                     ...(alias ? { alias } : {}),
                     ...(callbackUrl ? { callback_url: callbackUrl } : {}),
                     force_new: !!forceNew,
@@ -219,16 +210,16 @@ export function service(base?: string) {
                 s
             ),
 
-        getConnection: (id: string, userId: string, s?: AbortSignal) =>
+        getConnection: (id: string, _userId?: string, s?: AbortSignal) =>
             request(
-                "/connections/" + encodeURIComponent(id) + "?user_id=" + encodeURIComponent(userId),
+                "/connections/" + encodeURIComponent(id),
                 undefined,
                 s
             ),
 
-        listConnections: (userId: string, toolkitSlug?: string, s?: AbortSignal) =>
+        listConnections: (_userId?: string, toolkitSlug?: string, s?: AbortSignal) =>
             request(
-                "/connections?user_id=" + encodeURIComponent(userId) + (toolkitSlug ? "&toolkit_slug=" + encodeURIComponent(toolkitSlug) : ""),
+                "/connections" + (toolkitSlug ? "?toolkit_slug=" + encodeURIComponent(toolkitSlug) : ""),
                 undefined,
                 s
             ),

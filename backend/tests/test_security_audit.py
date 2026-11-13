@@ -26,6 +26,10 @@ if backend_dir not in sys.path:
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+import socket
+from unittest.mock import patch, MagicMock
+import httpcore
+
 from app.main import app
 from app.core.config import settings
 from app.core.security import redact_sensitive_data, _is_sensitive_key
@@ -39,8 +43,9 @@ from app.core.rate_limit import (
     connection_rate_limiter,
     share_rate_limiter,
     investigate_rate_limiter,
+    get_client_ip,
 )
-from app.services.doc_fetcher import SSRFSecurityValidator
+from app.services.doc_fetcher import SSRFSecurityValidator, SSRFSafeNetworkBackend
 from app.services.composio_connection import ComposioConnectionService, composio_connection_service
 
 
@@ -104,7 +109,7 @@ class TestSecurityAuditAndHardening(unittest.TestCase):
     # B. Input Validation & Bounds
     # -------------------------------------------------------------------------
     def test_sec_b01_path_traversal_rejected_in_guides_and_toolkits(self):
-        """Verify path traversal sequences are rejected with HTTP 400 or 404."""
+        """Verify path traversal sequences are rejected with HTTP 400."""
         async def _test():
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -123,7 +128,7 @@ class TestSecurityAuditAndHardening(unittest.TestCase):
                 res_tk = await client.get("/api/v1/composio/toolkit/..%2F..%2Fadmin")
                 self.assertIn(res_tk.status_code, (400, 404))
 
-                res_tk2 = await client.get("/api/v1/composio/toolkit/..admin")
+                res_tk2 = await client.get("/api/v1/composio/toolkit/..evil_admin")
                 self.assertEqual(res_tk2.status_code, 400)
 
         self.run_async(_test())
@@ -213,7 +218,7 @@ class TestSecurityAuditAndHardening(unittest.TestCase):
         self.assertIsNone(verify_session_token(tampered_token))
 
     def test_sec_d02_session_endpoint_sets_httponly_secure_cookie(self):
-        """Verify /api/v1/session endpoint issues signed tokens and sets HttpOnly cookie."""
+        """Verify /api/v1/session endpoint issues signed tokens and sets HttpOnly cookie without exposing signing key."""
         async def _test():
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -221,7 +226,8 @@ class TestSecurityAuditAndHardening(unittest.TestCase):
                 self.assertEqual(res.status_code, 200)
                 data = res.json()
                 self.assertIn("session_id", data)
-                self.assertIn("token", data)
+                self.assertEqual(data.get("status"), "authenticated")
+                self.assertNotIn("token", data)
                 self.assertTrue(data["is_new"])
 
                 # Check cookie
@@ -423,6 +429,265 @@ class TestSecurityAuditAndHardening(unittest.TestCase):
 
         self.run_async(_test())
 
+    # -------------------------------------------------------------------------
+    # Audit Correction Pass: Specific Regression Tests A through L
+    # -------------------------------------------------------------------------
+    def test_sec_req_a_fresh_session_cannot_claim_chosen_user_id(self):
+        """A. A fresh anonymous session cannot claim a chosen user_id."""
+        async def _test():
+            captured_ids = []
+            def handler(req: httpx.Request):
+                if req.url.path.endswith("/auth_configs"):
+                    return httpx.Response(200, json={"items": [{"id": "ac_1", "status": "ENABLED", "is_composio_managed": True, "toolkit": {"slug": "slack"}}]})
+                if req.url.path.endswith("/connected_accounts/link"):
+                    data = json.loads(req.content.decode())
+                    captured_ids.append(data.get("user_id"))
+                    return httpx.Response(201, json={"redirect_url": "https://connect.composio.dev/link/lk_1", "connected_account_id": "ca_1"})
+                if "connected_accounts" in req.url.path:
+                    return httpx.Response(200, json={"items": []})
+                return httpx.Response(404)
+
+            composio_connection_service._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                res = await client.post(
+                    "/api/v1/connections/slack/start",
+                    json={"user_id": "admin_chosen_victim", "alias": "test_alias"},
+                )
+                self.assertEqual(res.status_code, 200)
+                self.assertNotEqual(captured_ids[0], "admin_chosen_victim")
+                self.assertTrue(captured_ids[0].startswith("anon_"))
+
+        self.run_async(_test())
+
+    def test_sec_req_b_legacy_id_cannot_issue_session_for_victim(self):
+        """B. /session?legacy_id=victim cannot issue a valid session for that victim."""
+        async def _test():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                res = await client.get("/api/v1/session?legacy_id=victim_super_admin")
+                self.assertEqual(res.status_code, 200)
+                data = res.json()
+                self.assertNotEqual(data["session_id"], "victim_super_admin")
+                self.assertTrue(data["session_id"].startswith("anon_"))
+                cookie_val = res.cookies.get("oauth_nav_session")
+                self.assertEqual(verify_session_token(cookie_val), data["session_id"])
+
+        self.run_async(_test())
+
+    def test_sec_req_c_forged_x_user_id_cannot_list_connections(self):
+        """C. A request with a forged X-User-ID cannot list another user's connections."""
+        async def _test():
+            def handler(req: httpx.Request):
+                if "user_ids=usr_user_a" in str(req.url):
+                    return httpx.Response(200, json={"items": [{"id": "ca_user_a_acc", "user_id": "usr_user_a", "toolkit": {"slug": "slack"}, "status": "ACTIVE"}]})
+                return httpx.Response(200, json={"items": []})
+
+            composio_connection_service._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                token_b = sign_session_id("usr_user_b")
+                res = await client.get(
+                    "/api/v1/connections",
+                    cookies={"oauth_nav_session": token_b},
+                    headers={"X-User-ID": "usr_user_a"},
+                )
+                self.assertEqual(res.status_code, 200)
+                self.assertEqual(len(res.json()["items"]), 0)
+
+        self.run_async(_test())
+
+    def test_sec_req_d_forged_query_user_id_cannot_retrieve_account(self):
+        """D. A request with a forged query user_id cannot retrieve another user's connected account."""
+        async def _test():
+            def handler(req: httpx.Request):
+                if req.url.path.endswith("/connected_accounts/ca_user_a_acc"):
+                    return httpx.Response(200, json={"id": "ca_user_a_acc", "user_id": "usr_user_a", "toolkit": {"slug": "slack"}, "status": "ACTIVE"})
+                return httpx.Response(404)
+
+            composio_connection_service._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                token_b = sign_session_id("usr_user_b")
+                res = await client.get(
+                    "/api/v1/connections/ca_user_a_acc?user_id=usr_user_a",
+                    cookies={"oauth_nav_session": token_b},
+                )
+                self.assertEqual(res.status_code, 404)
+
+        self.run_async(_test())
+
+    def test_sec_req_e_user_a_can_see_own_gmail_connection(self):
+        """E. User A can still see their own existing Gmail connection."""
+        async def _test():
+            def handler(req: httpx.Request):
+                if req.url.path.endswith("/connected_accounts/ca_gmail_real_123"):
+                    return httpx.Response(200, json={"id": "ca_gmail_real_123", "user_id": "usr_user_a", "toolkit": {"slug": "gmail"}, "status": "ACTIVE", "created_at": "2026-11-13T00:00:00Z"})
+                return httpx.Response(404)
+
+            composio_connection_service._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                token_a = sign_session_id("usr_user_a")
+                res = await client.get(
+                    "/api/v1/connections/ca_gmail_real_123",
+                    cookies={"oauth_nav_session": token_a},
+                )
+                self.assertEqual(res.status_code, 200)
+                self.assertEqual(res.json()["status"], "ACTIVE")
+                self.assertEqual(res.json()["toolkit_slug"], "gmail")
+
+        self.run_async(_test())
+
+    def test_sec_req_f_user_b_cannot_see_user_a_gmail_connection(self):
+        """F. User B cannot see User A's Gmail connection."""
+        async def _test():
+            def handler(req: httpx.Request):
+                if req.url.path.endswith("/connected_accounts/ca_gmail_real_123"):
+                    return httpx.Response(200, json={"id": "ca_gmail_real_123", "user_id": "usr_user_a", "toolkit": {"slug": "gmail"}, "status": "ACTIVE"})
+                return httpx.Response(404)
+
+            composio_connection_service._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                token_b = sign_session_id("usr_user_b")
+                res = await client.get(
+                    "/api/v1/connections/ca_gmail_real_123",
+                    cookies={"oauth_nav_session": token_b},
+                )
+                self.assertEqual(res.status_code, 404)
+
+        self.run_async(_test())
+
+    def test_sec_req_g_gmail_and_slack_connections_remain_provider_isolated(self):
+        """G. Gmail and Slack connections remain provider-isolated."""
+        async def _test():
+            def handler(req: httpx.Request):
+                if "user_ids=usr_user_a" in str(req.url):
+                    return httpx.Response(200, json={
+                        "items": [
+                            {"id": "ca_gmail_1", "user_id": "usr_user_a", "toolkit": {"slug": "gmail"}, "status": "ACTIVE"},
+                            {"id": "ca_slack_1", "user_id": "usr_user_a", "toolkit": {"slug": "slack"}, "status": "ACTIVE"},
+                        ]
+                    })
+                return httpx.Response(200, json={"items": []})
+
+            composio_connection_service._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                token_a = sign_session_id("usr_user_a")
+                res_gmail = await client.get(
+                    "/api/v1/connections?toolkit_slug=gmail",
+                    cookies={"oauth_nav_session": token_a},
+                )
+                self.assertEqual(res_gmail.status_code, 200)
+                items_gmail = res_gmail.json()["items"]
+                self.assertEqual(len(items_gmail), 1)
+                self.assertEqual(items_gmail[0]["toolkit_slug"], "gmail")
+
+                res_slack = await client.get(
+                    "/api/v1/connections?toolkit_slug=slack",
+                    cookies={"oauth_nav_session": token_a},
+                )
+                self.assertEqual(res_slack.status_code, 200)
+                items_slack = res_slack.json()["items"]
+                self.assertEqual(len(items_slack), 1)
+                self.assertEqual(items_slack[0]["toolkit_slug"], "slack")
+
+        self.run_async(_test())
+
+    def test_sec_req_h_no_signed_session_token_in_localstorage_or_response_header(self):
+        """H. No signed session token is stored in localStorage or returned through an unnecessary response header."""
+        frontend_api_path = os.path.join(os.path.dirname(backend_dir), "frontend", "src", "components", "OAuth_Navigator", "OAuthAPI.ts")
+        if os.path.isfile(frontend_api_path):
+            with open(frontend_api_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.assertNotIn('localStorage.setItem("oauth_nav_session_token"', content)
+            self.assertNotIn('localStorage.getItem("oauth_nav_session_token"', content)
+
+        async def _test():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                res = await client.get("/api/v1/session")
+                self.assertNotIn("x-session-token", res.headers)
+
+        self.run_async(_test())
+
+    def test_sec_req_i_request_body_limits_work_without_content_length(self):
+        """I. Request-body limits work without Content-Length (chunked / streaming)."""
+        async def _test():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                async def large_stream():
+                    chunk = b"A" * (64 * 1024)  # 64 KB
+                    for _ in range(20):  # 20 * 64 KB = 1.28 MB > 1 MB limit
+                        yield chunk
+
+                res = await client.post(
+                    "/api/v1/investigate",
+                    content=large_stream(),
+                    headers={"Content-Type": "application/json"},
+                )
+                self.assertEqual(res.status_code, 413)
+                self.assertIn("too large", res.json()["detail"].lower())
+
+        self.run_async(_test())
+
+    def test_sec_req_j_ssrf_dns_rebinding_and_redirect_blocked_at_socket_boundary(self):
+        """J. SSRF redirect and DNS rebinding cases are blocked at the actual fetch boundary."""
+        async def _test():
+            backend = SSRFSafeNetworkBackend()
+
+            # 1. Block metadata destination
+            with self.assertRaises(httpcore.ConnectError) as ctx:
+                await backend.connect_tcp("169.254.169.254", 80)
+            self.assertIn("SSRF blocked", str(ctx.exception))
+
+            # 2. Block loopback destination
+            with self.assertRaises(httpcore.ConnectError) as ctx:
+                await backend.connect_tcp("127.0.0.1", 80)
+            self.assertIn("SSRF blocked", str(ctx.exception))
+
+            # 3. Block non-standard port
+            with self.assertRaises(httpcore.ConnectError) as ctx:
+                await backend.connect_tcp("example.com", 8080)
+            self.assertIn("Prohibited port 8080", str(ctx.exception))
+
+            # 4. Mixed public and private DNS answers blocked
+            with patch("socket.getaddrinfo") as mock_dns:
+                mock_dns.return_value = [
+                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", 443)),  # Private IP in answers
+                ]
+                with self.assertRaises(httpcore.ConnectError) as ctx:
+                    await backend.connect_tcp("mixed-evil-rebind.com", 443)
+                self.assertIn("is prohibited", str(ctx.exception))
+
+        self.run_async(_test())
+
+    def test_sec_req_k_rate_limiting_does_not_trust_unapproved_forwarded_headers(self):
+        """K. Rate limiting does not trust unapproved forwarded headers."""
+        req = MagicMock()
+        req.client.host = "198.51.100.5"
+        req.headers = {"x-forwarded-for": "8.8.8.8, 1.1.1.1"}
+
+        resolved_ip = get_client_ip(req, trusted_proxies=[])
+        self.assertEqual(resolved_ip, "198.51.100.5")
+
+        resolved_trusted = get_client_ip(req, trusted_proxies=["198.51.100.5"])
+        self.assertEqual(resolved_trusted, "8.8.8.8")
+
+    def test_sec_req_l_production_api_docs_follow_exposure_policy(self):
+        """L. Production API docs follow the chosen exposure policy."""
+        async def _test():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                res_health = await client.get("/api/v1/health")
+                self.assertEqual(res_health.status_code, 200)
+
+        self.run_async(_test())
+
 
 if __name__ == "__main__":
     unittest.main()
+

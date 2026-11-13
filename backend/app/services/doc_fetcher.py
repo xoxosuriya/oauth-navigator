@@ -28,6 +28,9 @@ from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import httpx
+import httpcore
+from httpcore._backends.auto import AutoBackend
+from httpcore import ConnectError
 
 from app.core.config import settings
 from app.core.security import redact_sensitive_data
@@ -232,6 +235,93 @@ class SSRFSecurityValidator:
 
         # 5. DNS Resolution and IP Validation
         return cls.resolve_and_validate_host(hostname, effective_port)
+
+
+class SSRFSafeNetworkBackend(AutoBackend):
+    """
+    Network backend that enforces strict SSRF and DNS rebinding protections
+    directly at the TCP socket creation boundary.
+    - Resolves DNS and validates all IP answers before establishing connection.
+    - Rejects loopback, private, link-local, multicast, cloud metadata, and reserved IPs.
+    - Rejects mixed public/private DNS answers.
+    - Enforces standard ports (80, 443).
+    - Pins TCP socket connection directly to the validated IP literal, guaranteeing
+      that the operating system cannot re-resolve the hostname to a different IP (anti-rebinding).
+    - Preserves TLS SNI and certificate verification through httpcore's start_tls(server_hostname).
+    """
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: Optional[float] = None,
+        local_address: Optional[str] = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        # Enforce standard ports
+        if port not in SSRFSecurityValidator.ALLOWED_PORTS:
+            raise ConnectError(f"SSRF blocked: Prohibited port {port}. Only standard ports (80, 443) are allowed.")
+
+        # Resolve host to IP addresses
+        lowered_host = host.strip().lower()
+        if lowered_host in SSRFSecurityValidator.BLOCKED_HOSTNAMES:
+            raise ConnectError(f"SSRF blocked: Blocked hostname '{lowered_host}'")
+
+        try:
+            # Check if host is already an IP literal
+            ip_obj = ipaddress.ip_address(lowered_host)
+            blocked, reason = SSRFSecurityValidator.is_ip_blocked(ip_obj)
+            if blocked:
+                raise ConnectError(f"SSRF blocked: Prohibited IP address '{lowered_host}' ({reason})")
+            validated_ip = str(ip_obj)
+        except ValueError:
+            # Domain name: resolve DNS
+            try:
+                addr_info = socket.getaddrinfo(lowered_host, port, proto=socket.IPPROTO_TCP)
+            except socket.gaierror as exc:
+                raise ConnectError(f"SSRF DNS resolution failed for '{lowered_host}': {exc}")
+            except Exception as exc:
+                raise ConnectError(f"SSRF socket error resolving '{lowered_host}': {exc}")
+
+            if not addr_info:
+                raise ConnectError(f"SSRF: Zero DNS records returned for '{lowered_host}'")
+
+            # Validate EVERY resolved address; reject if any IP is prohibited (anti-mixed rebinding)
+            safe_ips: List[str] = []
+            for entry in addr_info:
+                sockaddr = entry[4]
+                ip_str = sockaddr[0]
+                try:
+                    ip_addr = ipaddress.ip_address(ip_str)
+                    blocked, reason = SSRFSecurityValidator.is_ip_blocked(ip_addr)
+                    if blocked:
+                        raise ConnectError(f"SSRF blocked: DNS answer '{ip_str}' for '{lowered_host}' is prohibited: {reason}")
+                    safe_ips.append(ip_str)
+                except ValueError:
+                    raise ConnectError(f"SSRF blocked: Invalid resolved IP format '{ip_str}'")
+
+            if not safe_ips:
+                raise ConnectError(f"SSRF blocked: No permitted public IPs resolved for '{lowered_host}'")
+
+            validated_ip = safe_ips[0]
+
+        # Connect directly to the validated IP literal to prevent DNS rebinding
+        return await super().connect_tcp(
+            validated_ip,
+            port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )
+
+
+def create_ssrf_safe_transport(verify: bool = True) -> httpx.AsyncHTTPTransport:
+    """Creates an httpx AsyncHTTPTransport configured with SSRFSafeNetworkBackend."""
+    backend = SSRFSafeNetworkBackend()
+    pool = httpcore.AsyncConnectionPool(network_backend=backend, http1=True, http2=False)
+    transport = httpx.AsyncHTTPTransport(verify=verify)
+    transport._pool = pool
+    return transport
 
 
 # ---------------------------------------------------------------------------
@@ -674,11 +764,16 @@ class DocFetcherService:
 
         async with self.semaphore:
             owns_client = client is None
-            http_client = client or httpx.AsyncClient(
-                verify=True,
-                follow_redirects=False,  # Manual redirect validation
-                timeout=httpx.Timeout(self.timeout),
-            )
+            if client is not None:
+                http_client = client
+            else:
+                transport = create_ssrf_safe_transport(verify=True)
+                http_client = httpx.AsyncClient(
+                    transport=transport,
+                    verify=True,
+                    follow_redirects=False,  # Manual redirect validation
+                    timeout=httpx.Timeout(self.timeout),
+                )
 
             try:
                 while True:
@@ -842,7 +937,9 @@ class DocFetcherService:
 
         results: List[FetchedDoc] = []
 
+        safe_transport = create_ssrf_safe_transport(verify=True)
         async with httpx.AsyncClient(
+            transport=safe_transport,
             verify=True,
             follow_redirects=False,
             timeout=httpx.Timeout(self.timeout),

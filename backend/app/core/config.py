@@ -94,7 +94,7 @@ class Settings(BaseModel):
         default_factory=lambda: int(os.getenv("RATE_LIMIT_GLOBAL_PER_DAY", "500"))
     )
     MAX_REQUEST_BODY_BYTES: int = Field(
-        default_factory=lambda: int(os.getenv("MAX_REQUEST_BODY_BYTES", "10240"))
+        default_factory=lambda: int(os.getenv("MAX_REQUEST_BODY_BYTES", "1048576"))  # 1 MB
     )
     TRUSTED_PROXY_IPS: List[str] = Field(
         default_factory=lambda: [ip.strip() for ip in os.getenv("TRUSTED_PROXY_IPS", "").split(",") if ip.strip()]

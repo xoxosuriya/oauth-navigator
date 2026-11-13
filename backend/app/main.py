@@ -10,15 +10,81 @@ from app.api.v1.routes import api_router
 logger = logging.getLogger(__name__)
 
 is_production = settings.ENV == "production"
+enable_production_docs = os.getenv("ENABLE_PRODUCTION_DOCS", "false").lower() == "true"
+docs_enabled = (not is_production) or enable_production_docs
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description="Backend API providing actionable OAuth app setup guidance, provider review timelines, evidence traceability, and Composio integration blueprints.",
-    docs_url="/docs" if not is_production else "/docs",  # Keep docs accessible for reviewers
-    redoc_url="/redoc" if not is_production else "/redoc",
-    openapi_url="/openapi.json",
+    docs_url="/docs" if docs_enabled else None,
+    redoc_url="/redoc" if docs_enabled else None,
+    openapi_url="/openapi.json" if docs_enabled else None,
 )
+
+
+class PayloadTooLargeError(BaseException):
+    """Raised when streaming request body exceeds maximum allowed size (subclasses BaseException to bypass Starlette exception traps)."""
+    pass
+
+
+class BodySizeLimitMiddleware:
+    """
+    ASGI middleware enforcing a strict maximum request-body limit (default 1 MB / 1,048,576 bytes).
+    Protects against memory exhaustion and DoS attacks by:
+    1. Early rejection when Content-Length exceeds the limit.
+    2. Streaming chunk byte counting for chunked requests or missing/misleading Content-Length.
+    3. Immediate HTTP 413 termination as soon as accumulated bytes exceed the limit without buffering.
+    """
+    def __init__(self, app, max_bytes: int = 1048576):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers", []))
+        content_length_header = headers.get(b"content-length")
+        if content_length_header:
+            try:
+                cl_val = int(content_length_header.decode("ascii"))
+                if cl_val > self.max_bytes:
+                    res = JSONResponse(
+                        status_code=413,
+                        content={"detail": f"Request payload too large. Maximum allowed is {self.max_bytes} bytes."},
+                    )
+                    await res(scope, receive, send)
+                    return
+            except (ValueError, UnicodeDecodeError):
+                pass
+
+        total_bytes = 0
+
+        async def limited_receive():
+            nonlocal total_bytes
+            message = await receive()
+            if message.get("type") == "http.request":
+                chunk = message.get("body", b"")
+                total_bytes += len(chunk)
+                if total_bytes > self.max_bytes:
+                    raise PayloadTooLargeError()
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send)
+        except PayloadTooLargeError:
+            res = JSONResponse(
+                status_code=413,
+                content={"detail": f"Request payload too large. Maximum allowed is {self.max_bytes} bytes."},
+            )
+            await res(scope, receive, send)
+
+
+# Register streaming body size limit middleware
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.MAX_REQUEST_BODY_BYTES)
+
 
 # 1. Security Headers & Protocol Enforcement Middleware
 @app.middleware("http")
@@ -49,19 +115,8 @@ async def security_headers_middleware(request: Request, call_next):
 
     return response
 
-# 2. Request Payload Size Limit Middleware (Abuse & DoS protection)
-@app.middleware("http")
-async def limit_request_body_size(request: Request, call_next):
-    content_length = request.headers.get("content-length")
-    if content_length and content_length.isdigit():
-        if int(content_length) > settings.MAX_REQUEST_BODY_BYTES:
-            return JSONResponse(
-                status_code=413,
-                content={"detail": f"Request payload too large. Maximum allowed is {settings.MAX_REQUEST_BODY_BYTES} bytes."},
-            )
-    return await call_next(request)
 
-# 3. Global Exception Handler: Suppress stack traces in production
+# 2. Global Exception Handler: Suppress stack traces in production
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled exception processing {request.method} {request.url.path}: {exc}", exc_info=True)
@@ -82,7 +137,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
-    expose_headers=["X-Session-Token", "Retry-After"],
+    expose_headers=["Retry-After"],
 )
 
 # 5. Register API v1 routes
@@ -99,6 +154,6 @@ async def root():
     return {
         "service": settings.PROJECT_NAME,
         "version": settings.VERSION,
-        "docs_url": "/docs",
+        "docs_url": "/docs" if docs_enabled else None,
         "api_v1": settings.API_V1_STR,
     }

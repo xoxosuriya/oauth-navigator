@@ -70,6 +70,16 @@ class ResearchRateLimiter:
         """Removes timestamps older than the cutoff threshold."""
         return [t for t in timestamps if t > cutoff]
 
+    def _cleanup_dictionary(self, tracking_dict: Dict[str, List[float]], cutoff: float, max_entries: int = 5000):
+        """Prevents unbounded in-memory tracking dictionary growth under high unique IP volume."""
+        if len(tracking_dict) > max_entries:
+            expired_keys = [k for k, ts in tracking_dict.items() if not ts or max(ts) <= cutoff]
+            for k in expired_keys:
+                tracking_dict.pop(k, None)
+            if len(tracking_dict) > max_entries:
+                for k in list(tracking_dict.keys())[: (len(tracking_dict) - max_entries)]:
+                    tracking_dict.pop(k, None)
+
     async def acquire(self, client_ip: str) -> Tuple[bool, Optional[int], Optional[str]]:
         """
         Attempts to acquire a rate limit token for the given client IP.
@@ -84,6 +94,10 @@ class ResearchRateLimiter:
             now = time.time()
             one_min_ago = now - 60.0
             one_day_ago = now - 86400.0
+
+            # Bound dictionary sizes under high unique IP volume
+            self._cleanup_dictionary(self._ip_minute, one_min_ago)
+            self._cleanup_dictionary(self._ip_day, one_day_ago)
 
             # 1. Global daily cap check
             self._global_day = self._prune(self._global_day, one_day_ago)
@@ -218,11 +232,25 @@ class EndpointRateLimiter:
     def _prune(self, timestamps: List[float], cutoff: float) -> List[float]:
         return [t for t in timestamps if t > cutoff]
 
+    def _cleanup_dictionary(self, tracking_dict: Dict[str, List[float]], cutoff: float, max_entries: int = 5000):
+        """Prevents unbounded in-memory tracking dictionary growth under high unique IP volume."""
+        if len(tracking_dict) > max_entries:
+            expired_keys = [k for k, ts in tracking_dict.items() if not ts or max(ts) <= cutoff]
+            for k in expired_keys:
+                tracking_dict.pop(k, None)
+            if len(tracking_dict) > max_entries:
+                for k in list(tracking_dict.keys())[: (len(tracking_dict) - max_entries)]:
+                    tracking_dict.pop(k, None)
+
     async def acquire(self, client_ip: str) -> Tuple[bool, Optional[int], Optional[str]]:
         async with self._lock:
             now = time.time()
             one_min_ago = now - 60.0
             one_day_ago = now - 86400.0
+
+            # Bound dictionary size
+            self._cleanup_dictionary(self._ip_minute, one_min_ago)
+            self._cleanup_dictionary(self._ip_day, one_day_ago)
 
             ip_min = self._prune(self._ip_minute.get(client_ip, []), one_min_ago)
             self._ip_minute[client_ip] = ip_min
