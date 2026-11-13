@@ -7,29 +7,39 @@ declare const process: any
 const localDefault = "http://127.0.0.1:8000/api/v1"
 
 export function resolveBase(override?: string) {
+    if (override && typeof override === "string" && override.trim()) {
+        return override.trim().replace(/\/$/, "")
+    }
+
+    // In production browser environments (Vercel, custom domain, or any non-localhost host),
+    // route through the first-party reverse proxy (/api/v1). This ensures all session cookies
+    // are strictly first-party cookies on the frontend origin, preventing Incognito 3P cookie blocks.
+    if (typeof window !== "undefined" && window.location && window.location.hostname) {
+        const host = window.location.hostname.toLowerCase()
+        if (host !== "localhost" && host !== "127.0.0.1" && host !== "0.0.0.0") {
+            return "/api/v1"
+        }
+    }
 
     const env = (import.meta as any).env?.VITE_OAUTH_API_BASE_URL || (import.meta as any).env?.VITE_API_BASE_URL
+    if (env && typeof env === "string" && env.trim()) {
+        return env.trim().replace(/\/$/, "")
+    }
 
-    return (override || env || localDefault).replace(/\/$/, "")
-
+    return localDefault
 }
 
 export class APIError extends Error {
+    status: number
 
     constructor(
-
-        public status: number,
-
+        status: number,
         message: string
-
     ) {
-
         super(message)
-
+        this.status = status
         this.name = "APIError"
-
     }
-
 }
 
 export function isSafeExternalUrl(url: string): boolean {
@@ -40,25 +50,30 @@ export function isSafeExternalUrl(url: string): boolean {
         !trimmed.includes("data:")
 }
 
+// In-memory session identifier fallback for display/transient use only.
+// NEVER stored in localStorage to preserve zero-storage security requirements and incognito window isolation.
+let inMemoryFallbackUserId: string | null = null
+
 export function getSessionUserId(): string {
     if (typeof window === "undefined") return "usr_demo_session"
+    // Clear any legacy user_id from localStorage if present
     try {
-        let uid = localStorage.getItem("oauth_nav_session_user_id")
-        if (!uid || uid.length < 5) {
-            uid = "usr_" + Math.random().toString(36).substring(2, 10) + Date.now().toString(36).slice(-4)
-            localStorage.setItem("oauth_nav_session_user_id", uid)
+        if (localStorage.getItem("oauth_nav_session_user_id")) {
+            localStorage.removeItem("oauth_nav_session_user_id")
         }
-        return uid
-    } catch {
-        return "usr_demo_session"
+    } catch {}
+
+    if (!inMemoryFallbackUserId) {
+        inMemoryFallbackUserId = "usr_" + Math.random().toString(36).substring(2, 10) + Date.now().toString(36).slice(-4)
     }
+    return inMemoryFallbackUserId
 }
 
 export function service(base?: string) {
 
     const root = resolveBase(base)
 
-    async function request(path: string, body?: unknown, signal?: AbortSignal) {
+    async function request(path: string, body?: unknown, signal?: AbortSignal, methodOverride?: string) {
 
         const controller = new AbortController()
 
@@ -70,6 +85,8 @@ export function service(base?: string) {
 
         try {
 
+            const method = methodOverride || (body === undefined ? "GET" : "POST")
+
             const headers: Record<string, string> = {
                 Accept: "application/json",
                 ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
@@ -77,7 +94,7 @@ export function service(base?: string) {
 
             const res = await fetch(root + path, {
 
-                method: body === undefined ? "GET" : "POST",
+                method,
 
                 headers,
 
@@ -226,6 +243,9 @@ export function service(base?: string) {
 
         shopifyStatus: (s?: AbortSignal) =>
             request("/connections/shopify/status", undefined, s),
+
+        disconnect: (id: string, s?: AbortSignal) =>
+            request("/connections/" + encodeURIComponent(id), undefined, s, "DELETE"),
 
     }
 

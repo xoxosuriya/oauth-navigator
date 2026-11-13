@@ -32,6 +32,14 @@
   ],
   "rewrites": [
     {
+      "source": "/api/:path*",
+      "destination": "https://oauth-navigator-api.onrender.com/api/:path*"
+    },
+    {
+      "source": "/healthz",
+      "destination": "https://oauth-navigator-api.onrender.com/healthz"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

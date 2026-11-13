@@ -149,6 +149,15 @@ _demo_dir = os.path.join(_workspace_root, "demo_frontend")
 if os.path.isdir(_demo_dir):
     app.mount("/demo", StaticFiles(directory=_demo_dir, html=True), name="demo")
 
+@app.get("/healthz", tags=["System"])
+async def healthz():
+    return {
+        "status": "healthy",
+        "service": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+    }
+
+
 @app.get("/", tags=["System"])
 async def root():
     return {

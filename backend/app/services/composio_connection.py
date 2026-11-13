@@ -359,6 +359,30 @@ class ComposioConnectionService:
             total_items=len(results),
         )
 
+    async def delete_connected_account(
+        self,
+        connected_account_id: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Disconnects and deletes a connected account on Composio.
+        Strictly enforces session ownership validation prior to deletion.
+        """
+        # Enforce ownership check (raises 404 if not found or belongs to another session)
+        await self.get_connected_account(connected_account_id, user_id)
+
+        try:
+            await self._request("DELETE", f"/connected_accounts/{connected_account_id}")
+        except HTTPException as e:
+            if e.status_code != 404:
+                raise
+
+        return {
+            "status": "DELETED",
+            "connected_account_id": connected_account_id,
+            "message": "Connection disconnected and removed successfully.",
+        }
+
     def get_shopify_status(self) -> ShopifyConfigStatusResponse:
         custom_id = settings.COMPOSIO_SHOPIFY_AUTH_CONFIG_ID
         has_custom = bool(custom_id and custom_id.strip())

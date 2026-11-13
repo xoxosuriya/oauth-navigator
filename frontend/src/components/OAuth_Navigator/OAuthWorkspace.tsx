@@ -269,11 +269,22 @@ export default function OAuthWorkspace({
     const active = React.useRef<AbortController | null>(null)
 
     const [connection, setConnection] = React.useState<any>(null),
-        [connectionState, setConnectionState] = React.useState<string>("idle"),
+        [connectionState, setConnectionState] = React.useState<
+            | "idle"
+            | "initiating"
+            | "awaiting_authorization"
+            | "active"
+            | "failed"
+            | "expired"
+            | "cancelled"
+            | "shopify_custom_required"
+        >("idle"),
         [connectionError, setConnectionError] = React.useState<string>(""),
         [connectionRedirectUrl, setConnectionRedirectUrl] = React.useState<string>(""),
         [pendingAccountId, setPendingAccountId] = React.useState<string>(""),
-        [shopifyInfo, setShopifyInfo] = React.useState<any>(null)
+        [shopifyInfo, setShopifyInfo] = React.useState<any>(null),
+        [isPopupBlocked, setIsPopupBlocked] = React.useState<boolean>(false),
+        [testStatusMessage, setTestStatusMessage] = React.useState<string>("")
 
     const pollIntervalRef = React.useRef<any>(null)
     const userId = React.useMemo(() => getSessionUserId(), [])
@@ -309,7 +320,7 @@ export default function OAuthWorkspace({
                 if (pending) {
                     setConnection(pending)
                     setPendingAccountId(pending.id)
-                    setConnectionState("initiated")
+                    setConnectionState("awaiting_authorization")
                     setConnectionError("")
                     return
                 }
@@ -347,6 +358,7 @@ export default function OAuthWorkspace({
                 if (data.status === "ACTIVE") {
                     setConnectionState("active")
                     setConnectionError("")
+                    setTestStatusMessage("")
                     if (typeof window !== "undefined") {
                         sessionStorage.removeItem("oauth_nav_pending_account_id")
                         sessionStorage.removeItem("oauth_nav_pending_slug")
@@ -378,7 +390,7 @@ export default function OAuthWorkspace({
                         pollIntervalRef.current = null
                     }
                 } else {
-                    setConnectionState("initiated")
+                    setConnectionState("awaiting_authorization")
                 }
             }
         } catch (err: any) {
@@ -396,7 +408,7 @@ export default function OAuthWorkspace({
     const startPolling = React.useCallback((accountId: string) => {
         if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
         setPendingAccountId(accountId)
-        setConnectionState("initiated")
+        setConnectionState("awaiting_authorization")
         pollStatus(accountId)
         let count = 0
         pollIntervalRef.current = setInterval(() => {
@@ -405,11 +417,11 @@ export default function OAuthWorkspace({
                 clearInterval(pollIntervalRef.current)
                 pollIntervalRef.current = null
                 setConnectionState("expired")
-                setConnectionError("Authorization timed out. Click 'Refresh Status' or 'Reconnect' to try again.")
+                setConnectionError("Authorization timed out. Click 'Refresh Status' or 'Retry' to try again.")
             } else {
                 pollStatus(accountId)
             }
-        }, 3000)
+        }, 2500)
     }, [pollStatus])
 
     React.useEffect(() => {
@@ -425,17 +437,59 @@ export default function OAuthWorkspace({
 
         const params = new URLSearchParams(window.location.search)
         const connParam = params.get("connection_id") || params.get("connected_account_id")
+        const statusParam = params.get("status")
+
+        // 1. If inside authorization callback popup with window.opener, notify opener via postMessage
+        if ((connParam || statusParam) && window.opener && window.opener !== window) {
+            try {
+                window.opener.postMessage(
+                    {
+                        type: "OAUTH_CALLBACK",
+                        accountId: connParam || "",
+                        status: statusParam || "success",
+                    },
+                    window.location.origin
+                )
+            } catch {}
+            setTimeout(() => {
+                try { window.close() } catch {}
+            }, 500)
+            return
+        }
+
         const storedPending = sessionStorage.getItem("oauth_nav_pending_account_id")
         const targetId = connParam || storedPending
         if (targetId) {
             startPolling(targetId)
         }
         // Clear sensitive query params from browser URL after reading
-        if (connParam && window.history && window.history.replaceState) {
+        if ((connParam || statusParam) && window.history && window.history.replaceState) {
             const cleanUrl = window.location.origin + window.location.pathname
             window.history.replaceState({}, document.title, cleanUrl)
         }
-    }, [embedded, startPolling, userId, client])
+
+        // 2. Listen for postMessage from authorization tab (Strict origin validation)
+        function handleAuthMessage(event: MessageEvent) {
+            if (event.origin !== window.location.origin) return
+            const data = event.data
+            if (data && data.type === "OAUTH_CALLBACK") {
+                const { accountId, status } = data
+                if (status === "success" || status === "active" || !status) {
+                    if (accountId) {
+                        pollStatus(accountId)
+                    }
+                } else if (status === "failed" || status === "error") {
+                    setConnectionState("failed")
+                    setConnectionError("Provider authorization was denied or failed.")
+                }
+            }
+        }
+
+        window.addEventListener("message", handleAuthMessage)
+        return () => {
+            window.removeEventListener("message", handleAuthMessage)
+        }
+    }, [embedded, startPolling, userId, client, pollStatus])
 
     // Synchronize connection status whenever active guide changes
     React.useEffect(() => {
@@ -452,10 +506,56 @@ export default function OAuthWorkspace({
         checkExistingConnection(guide.slug)
     }, [guide?.slug, checkExistingConnection])
 
+    async function handleDisconnect(accountId?: string) {
+        const id = accountId || connection?.id
+        if (!id) {
+            setConnection(null)
+            setConnectionState("idle")
+            return
+        }
+        try {
+            await client.disconnect(id)
+        } catch {
+            // gracefully clear local state
+        }
+        if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current)
+            pollIntervalRef.current = null
+        }
+        if (typeof window !== "undefined") {
+            sessionStorage.removeItem("oauth_nav_pending_account_id")
+            sessionStorage.removeItem("oauth_nav_pending_slug")
+        }
+        setConnection(null)
+        setConnectionState("idle")
+        setConnectionError("")
+        setTestStatusMessage("")
+    }
+
+    async function handleTestConnection(accountId?: string) {
+        const id = accountId || connection?.id
+        if (!id) return
+        setTestStatusMessage("Verifying active connection...")
+        try {
+            const data = await client.getConnection(id, userId)
+            if (data && data.status === "ACTIVE") {
+                setTestStatusMessage("✓ Verified: Connection is ACTIVE and operational!")
+                setConnection(data)
+                setConnectionState("active")
+            } else {
+                setTestStatusMessage(`Status: ${data?.status || "UNKNOWN"} - ${data?.status_reason || "Not active"}`)
+            }
+        } catch (e: any) {
+            setTestStatusMessage(e.message || "Verification failed.")
+        }
+    }
+
     async function handleConnect(toolkitSlug: string, forceNew: boolean = false) {
         if (!toolkitSlug) return
         const slug = toolkitSlug.toLowerCase().trim()
         setConnectionError("")
+        setTestStatusMessage("")
+        setIsPopupBlocked(false)
 
         if (slug === "shopify") {
             try {
@@ -470,7 +570,20 @@ export default function OAuthWorkspace({
             }
         }
 
-        setConnectionState("initializing")
+        // ISSUE 1 REQUIREMENT:
+        // Open the new tab synchronously inside click handler before awaiting async calls to prevent popup blocker.
+        let authWindow: Window | null = null
+        try {
+            authWindow = window.open("about:blank", "_blank")
+        } catch {
+            authWindow = null
+        }
+
+        if (!authWindow || authWindow.closed || typeof authWindow.closed === "undefined") {
+            setIsPopupBlocked(true)
+        }
+
+        setConnectionState("initiating")
         try {
             const callbackUrl = typeof window !== "undefined"
                 ? `${window.location.origin}${window.location.pathname}`
@@ -482,12 +595,16 @@ export default function OAuthWorkspace({
             const res = await client.startConnection(slug, userId, attemptAlias, callbackUrl, forceNew)
 
             if (res && res.already_active) {
+                if (authWindow && !authWindow.closed) {
+                    try { authWindow.close() } catch {}
+                }
                 setConnection({
                     id: res.connected_account_id,
                     toolkit_slug: res.toolkit_slug,
                     status: "ACTIVE",
                     user_id: userId,
                     alias: res.alias,
+                    updated_at: "Just now",
                 })
                 setConnectionState("active")
                 setConnectionError("")
@@ -504,23 +621,37 @@ export default function OAuthWorkspace({
                     user_id: userId,
                     alias: res.alias,
                 })
-                // Stop loading state immediately once authorization link is generated
-                setConnectionState("initiated")
+                setConnectionState("awaiting_authorization")
 
                 if (typeof window !== "undefined") {
                     sessionStorage.setItem("oauth_nav_pending_account_id", res.connected_account_id)
                     sessionStorage.setItem("oauth_nav_pending_slug", slug)
                 }
+
                 startPolling(res.connected_account_id)
-                const authWindow = window.open(res.redirect_url, "_blank", "noopener,noreferrer")
-                if (!authWindow || authWindow.closed || typeof authWindow.closed === "undefined") {
-                    window.location.href = res.redirect_url
+
+                if (authWindow && !authWindow.closed) {
+                    try {
+                        authWindow.location.href = res.redirect_url
+                    } catch {
+                        setIsPopupBlocked(true)
+                    }
+                } else {
+                    setIsPopupBlocked(true)
                 }
+
+                // CRITICAL (Issue 1): NEVER set window.location.href in the original tab!
             } else {
+                if (authWindow && !authWindow.closed) {
+                    try { authWindow.close() } catch {}
+                }
                 setConnectionState("failed")
                 setConnectionError("Failed to generate authorization URL.")
             }
         } catch (err: any) {
+            if (authWindow && !authWindow.closed) {
+                try { authWindow.close() } catch {}
+            }
             setConnectionState("failed")
             setConnectionError(err.message || "Failed to start connection.")
         }
@@ -1218,7 +1349,7 @@ export default function OAuthWorkspace({
                                     </button>
 
                                     <button
-                                        disabled={!!busy || connectionState === "initializing"}
+                                        disabled={!!busy || connectionState === "initiating" || connectionState === "initializing"}
                                         onClick={() => {
                                             if (connectionState === "active") {
                                                 handleConnect(guide.slug, true)
@@ -1232,10 +1363,10 @@ export default function OAuthWorkspace({
                                         }}
                                     >
                                         <Icon name="key" size={16} />
-                                        {connectionState === "initializing"
+                                        {connectionState === "initiating" || connectionState === "initializing"
                                             ? "Initiating…"
-                                            : connectionState === "initiated"
-                                            ? "Awaiting Approval…"
+                                            : connectionState === "awaiting_authorization" || connectionState === "initiated"
+                                            ? "Authorizing in New Tab…"
                                             : connectionState === "active"
                                             ? `✓ ${guide.app_name} Connected`
                                             : (connectionState === "failed" || connectionState === "expired")
@@ -1280,8 +1411,8 @@ export default function OAuthWorkspace({
                                     >
                                         <b style={{ fontFamily: "var(--display)", fontSize: 14 }}>
                                             {guide ? guide.app_name : "OAuth"} Connection · {
-                                                connectionState === "initializing" ? "INITIALIZING"
-                                                : connectionState === "initiated" ? "INITIATED · AWAITING APPROVAL"
+                                                connectionState === "initiating" || connectionState === "initializing" ? "INITIATING"
+                                                : connectionState === "awaiting_authorization" || connectionState === "initiated" ? "AWAITING AUTHORIZATION"
                                                 : connectionState === "active" ? "ACTIVE"
                                                 : connectionState === "expired" ? "EXPIRED"
                                                 : connectionState === "cancelled" ? "CANCELLED"
@@ -1294,17 +1425,47 @@ export default function OAuthWorkspace({
                                         </span>
                                     </div>
 
-                                    {connectionState === "initializing" && (
+                                    {(connectionState === "initiating" || connectionState === "initializing") && (
                                         <p style={{ margin: 0 }}>
                                             Generating secure Composio authorization link and session…
                                         </p>
                                     )}
 
-                                    {connectionState === "initiated" && (
+                                    {(connectionState === "awaiting_authorization" || connectionState === "initiated") && (
                                         <div>
                                             <p style={{ margin: "0 0 10px" }}>
-                                                Authorization window opened. Complete the consent prompt in the newly opened tab to activate your connection.
+                                                Authorization window opened in a new tab. Complete the consent prompt to activate your connection.
                                             </p>
+
+                                            {isPopupBlocked && (
+                                                <div style={{
+                                                    margin: "10px 0 14px",
+                                                    padding: "10px 14px",
+                                                    background: "#FFF8E1",
+                                                    border: "1.5px solid #FFA000",
+                                                    borderRadius: 8,
+                                                    fontSize: 13,
+                                                    color: "#5D4037",
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    justifyContent: "space-between",
+                                                    gap: 10
+                                                }}>
+                                                    <span>⚠️ Popup tab was blocked by your browser. Please open manually:</span>
+                                                    {connectionRedirectUrl && (
+                                                        <a
+                                                            href={connectionRedirectUrl}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="action"
+                                                            style={{ fontSize: 12, padding: "5px 12px", whiteSpace: "nowrap" }}
+                                                        >
+                                                            Open Authorization Page ↗
+                                                        </a>
+                                                    )}
+                                                </div>
+                                            )}
+
                                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                                 {connectionRedirectUrl && (
                                                     <a
@@ -1349,7 +1510,26 @@ export default function OAuthWorkspace({
                                                     "Updated": connection?.updated_at || connection?.created_at || "Just now",
                                                 }}
                                             />
-                                            <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+                                            {testStatusMessage && (
+                                                <p style={{ margin: "8px 0 4px", fontSize: 12, color: testStatusMessage.startsWith("✓") ? "#1B5E20" : "#C62828", fontWeight: 600 }}>
+                                                    {testStatusMessage}
+                                                </p>
+                                            )}
+                                            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                                <button
+                                                    className="action secondary"
+                                                    onClick={() => handleTestConnection(connection?.id || pendingAccountId)}
+                                                    style={{ fontSize: 12, padding: "6px 12px" }}
+                                                >
+                                                    Test Connection
+                                                </button>
+                                                <button
+                                                    className="action secondary"
+                                                    onClick={() => handleDisconnect(connection?.id || pendingAccountId)}
+                                                    style={{ fontSize: 12, padding: "6px 12px", color: "#C62828" }}
+                                                >
+                                                    Disconnect
+                                                </button>
                                                 <button
                                                     className="action secondary"
                                                     onClick={() => handleConnect(guide?.slug || "", true)}

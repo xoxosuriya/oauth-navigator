@@ -413,3 +413,29 @@ async def list_user_connections(
         user_id=session_user_id,
         toolkit_slug=toolkit_slug.strip() if toolkit_slug else None,
     )
+
+
+@api_router.delete(
+    "/connections/{connected_account_id}",
+    tags=["Connections"],
+)
+async def delete_connection(
+    connected_account_id: str,
+    http_request: Request = None,
+    http_response: Response = None,
+):
+    """
+    Disconnects and deletes a connected account.
+    Enforces user session ownership strictly against authenticated session identity.
+    Returns HTTP 404 if the account belongs to another session or does not exist.
+    """
+    clean_account_id = connected_account_id.strip()
+    if not clean_account_id or any(p in clean_account_id for p in ("..", "/", "\\", "\0")):
+        raise HTTPException(status_code=400, detail="Invalid connected account identifier format.")
+
+    session_user_id = await get_authenticated_session(http_request, http_response)
+
+    return await composio_connection_service.delete_connected_account(
+        connected_account_id=clean_account_id,
+        user_id=session_user_id,
+    )
