@@ -385,10 +385,9 @@ In addition to pre-flight guidance, OAuth Navigator implements the **live, real-
 | `COMPOSIO_API_KEY` | Backend | Composio API key (`ak_...`) used server-side for metadata and connection links. |
 | `COMPOSIO_BASE_URL` | Backend | Composio API v3.1 root (default: `https://backend.composio.dev/api/v3.1`). |
 | `COMPOSIO_SHOPIFY_AUTH_CONFIG_ID` | Backend (Optional) | Custom OAuth config ID for Shopify if registered in Composio. |
-| `SESSION_SECRET_KEY` | Backend (Optional) | Custom secret for HMAC-SHA256 session token signing (falls back to app-derived salt). |
 | `ALLOWED_ORIGINS` | Backend | Comma-separated CORS origins (e.g. `https://oauthnavigator.vercel.app,http://localhost:3000`). |
-| `FRONTEND_BASE_URL` | Backend | Production frontend URL for shareable permalinks (`https://oauthnavigator.vercel.app`). |
-| `VITE_OAUTH_API_BASE_URL` | Frontend | Backend API root (`/api/v1` in production via Vercel first-party proxy; `http://localhost:8000/api/v1` in local dev). |
+| `FRONTEND_BASE_URL` | Backend | Production frontend URL for shareable permalinks. |
+| `VITE_OAUTH_API_BASE_URL` | Frontend | Backend API root (`https://oauth-navigator-api.onrender.com/api/v1`). |
 
 ### Local Setup (Development)
 ```bash
@@ -414,8 +413,8 @@ npm run dev # Starts Vite on http://localhost:5173 or :3000
    - Pre-flight guidance analyzes review policies and generates blueprints. The connection flow initiates real Composio connection links.
 2. **Ephemeral Storage on Render Free Tier:**
    - Free instances spin down after 15 minutes of inactivity; `seed_guides.json` persists permanently, while live-generated guides and shared IDs are reset on restart unless committed or backed by persistent storage.
-3. **Server-Issued Anonymous Session Identity:**
-   - Implements zero-login server-issued anonymous session IDs (`anon_<token>`) cryptographically signed via HMAC-SHA256 (`oauth_nav_session` HttpOnly cookie) with first-party proxying (`/api/v1`) and strict tenant isolation. In enterprise production deployments requiring cross-device persistence or team management, this can seamlessly transition to Auth0, WorkOS, or enterprise OIDC.
+3. **Demo Session Identity:**
+   - Uses browser-generated UUID session tokens with ownership enforcement. In production, integrate enterprise SSO or Auth0.
 
 ---
 
