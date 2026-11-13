@@ -79,7 +79,7 @@ class TestGeminiResearchEngine(unittest.TestCase):
                 }
             ],
             "meta": {
-                "api_key": "AIzaSyD_fake_google_api_key_for_testing",
+                "api_key": "test_placeholder_mock_api_key_fixture",
                 "nested_credentials": {
                     "password": "my_master_password",
                     "private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0...",
