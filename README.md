@@ -30,35 +30,63 @@ OAuth Navigator is built as a decoupled, modular full-stack application:
 │                   OAuth Navigator                      │
 │      React 18 + TypeScript + Vite + Tailwind CSS       │
 │           (Preserved Framer Design System)             │
-│                 http://127.0.0.1:3000                  │
+│        Production: https://oauthnavigator.vercel.app    │
+│           Local Dev: http://127.0.0.1:3000             │
 └──────────────────────────┬─────────────────────────────┘
-                           │ REST API (JSON / Strict CORS)
+                           │ 1. First-Party API Proxy (/api/v1)
+                           │    HttpOnly Secure SameSite Cookies
                            ▼
 ┌────────────────────────────────────────────────────────┐
 │                   FastAPI Backend                      │
-│            Python 3.11 + Pydantic v2 + Uvicorn         │
-│                 http://127.0.0.1:8000                  │
+│            Python 3.12 + Pydantic v2 + Uvicorn         │
+│     Production: https://oauth-navigator-api.onrender.com│
+│           Local Dev: http://127.0.0.1:8000             │
 ├──────────────────────────┬─────────────────────────────┤
 │   Deterministic Evidence │      Composio Integration   │
 │   & Documentation Engine │     Toolkit & OAuth Catalog │
+├──────────────────────────┼─────────────────────────────┤
+│ Session Integrity (HMAC) │ Real OAuth Connection Engine│
+│ Multi-Tenant Isolation   │ Lifecycle State Machine     │
 └──────────────────────────┴─────────────────────────────┘
 ```
 
-- **Frontend (`/frontend`):** Built with React 18, TypeScript, and Vite. A desktop-first reconstruction preserving the original Framer design system (typography: `Unbounded` display headers, `Poppins` body, custom neo-brutalist borders, tactile pill badges, procedural SVGs, and interactive architecture diagrams).
-- **Backend (`/backend`):** FastAPI service utilizing Pydantic v2 schemas, strict type-checking, in-memory repository with thread safety, and modular routes (`/health`, `/apps`, `/investigate`, `/research`, `/composio`, `/guides`).
-- **Composio Integration:** Direct integration with Composio's API v3.1 to inspect toolkit capabilities, authentication schemes, and pre-registered managed credentials.
+- **Frontend (`/frontend`):** Built with React 18, TypeScript, and Vite. A desktop-first reconstruction preserving the original Framer design system (typography: `Unbounded` display headers, `Poppins` body, custom neo-brutalist borders, tactile pill badges, procedural SVGs, and interactive architecture diagrams). Configured with a first-party reverse proxy via Vercel rewrites (`/api/:path*`) to preserve session cookies in Incognito mode.
+- **Backend (`/backend`):** FastAPI service utilizing Pydantic v2 schemas, strict type-checking, in-memory repository with thread safety, cryptographic session integrity (HMAC-SHA256), and modular API routes (`/healthz`, `/session`, `/apps`, `/investigate`, `/research`, `/composio`, `/guides`, `/connections`).
+- **Composio Integration:** Direct integration with Composio's API v3.1 to inspect toolkit capabilities, authentication schemes, pre-registered managed credentials, and generate live OAuth connect links.
+
+### Comprehensive Implemented & Verified API Endpoints
+
+| Category | Endpoint | HTTP Method | Description |
+|---|---|---|---|
+| **System** | `/healthz` | `GET` | Root system health and uptime status. |
+| **System** | `/api/v1/health` | `GET` | API v1 service health status and timestamp. |
+| **Session** | `/api/v1/session` | `GET` | Server-issued, cryptographically signed anonymous session token (`anon_<token>`) via HttpOnly cookie. |
+| **Guides** | `/api/v1/apps` | `GET` | Lists curated and investigated OAuth guides with search and difficulty filters. |
+| **Guides** | `/api/v1/apps/{id_or_slug}` | `GET` | Retrieves full guide by identifier, slug, or display name (e.g. `gmail`, `slack`, `shopify`). |
+| **Research** | `/api/v1/investigate` | `POST` | Live documentation and metadata extraction for unfamiliar applications (e.g. Linear, Notion). |
+| **Research** | `/api/v1/research` | `POST` | Deep technical RFC and endpoint research pipeline. |
+| **Composio** | `/api/v1/composio/toolkit/{slug}` | `GET` | Live Composio toolkit catalog metadata inspection. |
+| **Sharing** | `/api/v1/guides/share` | `POST` | Generates a permanent shareable permalink for an existing guide. |
+| **Sharing** | `/api/v1/guides/share/{share_id}` | `GET` | Resolves and retrieves a shared guide by permalink ID. |
+| **Connections** | `/api/v1/connections/{slug}/start` | `POST` | Initializes a live Composio Connect Link bound to authenticated session identity. |
+| **Connections** | `/api/v1/connections/{id}` | `GET` | Real-time connection status query with strict multi-tenant ownership validation. |
+| **Connections** | `/api/v1/connections` | `GET` | Lists all connected accounts owned by the authenticated session. |
+| **Connections** | `/api/v1/connections/{id}` | `DELETE` | Disconnects and deletes a connected account with ownership verification. |
+| **Connections** | `/api/v1/connections/shopify/status` | `GET` | Returns Shopify Custom OAuth configuration status and setup instructions. |
 
 ### Clarification of Responsibilities (OAuth Navigator vs. Downstream Runtime)
 - **What OAuth Navigator does:**
   - Evaluates authentication readiness and classifies pathways (`COMPOSIO MANAGED AVAILABLE` vs `COMPOSIO CUSTOM ONLY`).
   - Analyzes review gates, SLAs, CASA tiers, and permission scopes from provider documentation.
   - Defines the operational boundary between human developers and downstream agent automation.
+  - Manages the complete, live OAuth connection journey via Composio API v3.1: initiates Connect Links, opens dedicated authorization tabs without popup blocking or main window redirection, validates callbacks via secure postMessage + polling fallback, verifies active connection status, tests active connectivity, and safely disconnects sessions.
+  - Enforces multi-tenant session isolation with server-issued, cryptographically signed HttpOnly cookies.
   - Generates code snippets for Composio SDK session initialization (`session create managed`, `session create custom`) and Auth Config JSON payloads.
   - Persists and renders shareable integration guides.
 - **What OAuth Navigator does NOT do (Delegated to Downstream Agent / Composio Runtime):**
   - OAuth Navigator is **not** an OAuth authorization server or runtime token broker.
-  - It does **not** perform live authorization-code exchanges, token refreshes, or store access tokens in secure keyrings.
-  - Those runtime operations are carried out by downstream AI agent runtimes or the Composio SDK during tool execution.
+  - It does **not** store raw access tokens, client secrets, or refresh tokens in local keyrings (tokens are managed server-side by Composio).
+  - Runtime tool execution and downstream token injection are handled by downstream agent runtimes or the Composio SDK during action execution.
 
 ---
 
@@ -279,37 +307,49 @@ In addition to pre-flight guidance, OAuth Navigator implements the **live, real-
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│                    React Frontend                      │
-│             (Workspace Guide / Action Bar)             │
+│                   OAuth Navigator UI                   │
+│           (Workspace Guide / Direct Connect)           │
 │            User clicks "Connect {AppName}"             │
 └──────────────────────────┬─────────────────────────────┘
-                           │ 1. POST /api/v1/connections/{slug}/start
-                           │    Payload: { user_id: "usr_...", callback_url: "..." }
+                           │ 1. Synchronously reserves blank tab: window.open("about:blank", "_blank")
+                           │ 2. Dispatches POST /api/v1/connections/{slug}/start (via Vercel proxy)
+                           │    Transmits HttpOnly signed session cookie: oauth_nav_session
                            ▼
 ┌────────────────────────────────────────────────────────┐
-│                   FastAPI Backend                      │
+│              FastAPI Backend (Render Web API)          │
 │            ComposioConnectionService                   │
+│  • Authenticates caller via HMAC-SHA256 session cookie │
+│  • Resolves managed or custom Auth Config in Composio  │
+│  • Generates unique per-attempt alias & Connect Link   │
 └──────────────────────────┬─────────────────────────────┘
-                           │ 2. Discovers auth config via Composio v3.1:
-                           │    GET /auth_configs?toolkit_slug={slug}&is_composio_managed=true
-                           │ 3. Generates Connect Link:
-                           │    POST /connected_accounts/link
-                           │    Payload: { auth_config_id, user_id, callback_url }
+                           │ 3. POST https://backend.composio.dev/api/v3.1/connected_accounts/link
+                           │    Payload: { auth_config_id, user_id: session_id, callback_url }
                            ▼
 ┌────────────────────────────────────────────────────────┐
 │                   Composio v3.1 API                    │
-│             (backend.composio.dev/api/v3.1)            │
 │       Returns: redirect_url, connected_account_id      │
 └──────────────────────────┬─────────────────────────────┘
                            │ 4. Return to frontend: { redirect_url, connected_account_id }
                            ▼
 ┌────────────────────────────────────────────────────────┐
 │                    React Frontend                      │
-│  • Opens authorization portal (redirect or popup tab)  │
-│  • Stores pending connection in browser session        │
-│  • Polls GET /api/v1/connections/{id}?user_id={uid}    │
-│  • Lifecycle: INITIALIZING → ACTIVE / FAILED / EXPIRED │
-│  • Shows verified status, account ID, and reconnect    │
+│  • Exclusively navigates reserved tab to redirect_url  │
+│  • Original tab NEVER navigates (stays on workspace)   │
+│  • Lifecycle: INITIATING → AWAITING_AUTHORIZATION      │
+│  • Fallback in-page link if popup blocked by browser   │
+│  • Listens for postMessage (strict origin check)       │
+│  • Active polling fallback: GET /api/v1/connections/{id│
+└──────────────────────────┬─────────────────────────────┘
+                           │ 5. Provider consent completed in auth tab:
+                           │    Auth tab sends postMessage to opener and closes
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│                 Verified Connection                    │
+│  • Lifecycle transitions to ACTIVE                     │
+│  • Renders verified Account ID, Toolkit, Alias, Date   │
+│  • Action: Test Connection (live verification)         │
+│  • Action: Disconnect (DELETE /api/v1/connections/{id})│
+│  • Action: Reconnect (force_new attempt with new alias)│
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -327,11 +367,12 @@ In addition to pre-flight guidance, OAuth Navigator implements the **live, real-
    - If a custom app is registered in Shopify Partners and configured in Composio Dashboard, setting `COMPOSIO_SHOPIFY_AUTH_CONFIG_ID` on the backend unlocks the live connection flow.
    - No credentials or secrets are ever requested or stored on the frontend.
 
-### Security & Identity Architecture
-- **Browser-Session User Identity:** Every browser session generates a stable, opaque `user_id` (e.g. `usr_...`) persisted in `localStorage`.
-- **Ownership Validation:** All retrieval endpoints (`GET /api/v1/connections/{id}`) strictly validate that the requesting user owns the connected account, preventing cross-tenant enumeration.
-- **Zero Credential Exposure:** Client secrets, API keys, access tokens, and refresh tokens are completely redacted and never returned to the frontend.
-- **Demo Identity Scope Notice:** This demo session identifier provides session isolation suitable for an evaluation take-home demo. It is **not** a replacement for production OAuth2/OIDC multi-tenant identity systems.
+### Security, Cryptographic Session Integrity & Storage Architecture
+- **Server-Issued HttpOnly Session Cookies:** Anonymous user session identities are generated strictly server-side using high-entropy random identifiers (`anon_<token>`). The backend cryptographically signs each session ID using HMAC-SHA256 (`{session_id}.{signature}`) and sets an `HttpOnly`, `Secure`, `SameSite=none/lax` cookie (`oauth_nav_session`).
+- **First-Party Reverse Proxy (Incognito Cookie Continuity):** In production on Vercel (`oauthnavigator.vercel.app`), API requests route through the Vercel edge reverse proxy (`/api/:path*` -> Render). As a result, the session cookie is treated as a **100% first-party cookie** on `oauthnavigator.vercel.app`, completely immune to third-party cookie blocking in Chrome Incognito, Safari, and Firefox Private Browsing.
+- **Strict Multi-Tenant Session Isolation:** Two separate browser sessions or incognito windows obtain independent session IDs. All connection retrieval, listing, testing, and deletion endpoints enforce strict session ownership checks. Attempts by one session to access another session's connection return `HTTP 404 Not Found` (preventing ID enumeration).
+- **Zero Secrets in Browser Storage:** No API keys, client secrets, access tokens, or session identifiers are stored in `localStorage` or `sessionStorage`. All authentication state resides in the server-managed HttpOnly cookie.
+- **Tab Preservation & Popup Handling:** The original OAuth Navigator workspace tab never redirects or reloads. The authorization URL opens exclusively in a synchronously reserved tab, with automatic fallback links displayed if a browser blocks popups.
 
 ---
 
@@ -344,9 +385,10 @@ In addition to pre-flight guidance, OAuth Navigator implements the **live, real-
 | `COMPOSIO_API_KEY` | Backend | Composio API key (`ak_...`) used server-side for metadata and connection links. |
 | `COMPOSIO_BASE_URL` | Backend | Composio API v3.1 root (default: `https://backend.composio.dev/api/v3.1`). |
 | `COMPOSIO_SHOPIFY_AUTH_CONFIG_ID` | Backend (Optional) | Custom OAuth config ID for Shopify if registered in Composio. |
+| `SESSION_SECRET_KEY` | Backend (Optional) | Custom secret for HMAC-SHA256 session token signing (falls back to app-derived salt). |
 | `ALLOWED_ORIGINS` | Backend | Comma-separated CORS origins (e.g. `https://oauthnavigator.vercel.app,http://localhost:3000`). |
-| `FRONTEND_BASE_URL` | Backend | Production frontend URL for shareable permalinks. |
-| `VITE_OAUTH_API_BASE_URL` | Frontend | Backend API root (`https://oauth-navigator-api.onrender.com/api/v1`). |
+| `FRONTEND_BASE_URL` | Backend | Production frontend URL for shareable permalinks (`https://oauthnavigator.vercel.app`). |
+| `VITE_OAUTH_API_BASE_URL` | Frontend | Backend API root (`/api/v1` in production via Vercel first-party proxy; `http://localhost:8000/api/v1` in local dev). |
 
 ### Local Setup (Development)
 ```bash
@@ -372,8 +414,8 @@ npm run dev # Starts Vite on http://localhost:5173 or :3000
    - Pre-flight guidance analyzes review policies and generates blueprints. The connection flow initiates real Composio connection links.
 2. **Ephemeral Storage on Render Free Tier:**
    - Free instances spin down after 15 minutes of inactivity; `seed_guides.json` persists permanently, while live-generated guides and shared IDs are reset on restart unless committed or backed by persistent storage.
-3. **Demo Session Identity:**
-   - Uses browser-generated UUID session tokens with ownership enforcement. In production, integrate enterprise SSO or Auth0.
+3. **Server-Issued Anonymous Session Identity:**
+   - Implements zero-login server-issued anonymous session IDs (`anon_<token>`) cryptographically signed via HMAC-SHA256 (`oauth_nav_session` HttpOnly cookie) with first-party proxying (`/api/v1`) and strict tenant isolation. In enterprise production deployments requiring cross-device persistence or team management, this can seamlessly transition to Auth0, WorkOS, or enterprise OIDC.
 
 ---
 

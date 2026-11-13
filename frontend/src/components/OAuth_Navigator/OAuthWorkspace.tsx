@@ -1704,54 +1704,54 @@ export default function OAuthWorkspace({
 
                                 <Panel title="OAuth readiness" warm>
 
-                                    <span className="tag">{readiness}</span>
+                                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+                                        <span className="tag">{readiness}</span>
+                                        {comp?.managed_oauth_available === true && (
+                                            <span className="tag" style={{ background: "#D1F4D9", color: "#1B5E20", border: "1px solid #2E7D32" }}>
+                                                ✓ Managed OAuth Available
+                                            </span>
+                                        )}
+                                        {comp?.managed_oauth_available === false && (
+                                            <span className="tag" style={{ background: "#FFF3E0", color: "#E65100", border: "1px solid #EF6C00" }}>
+                                                Custom OAuth Required
+                                            </span>
+                                        )}
+                                    </div>
 
                                     <Rows
-
                                         data={{
-
-                                            "Research status": r?.status,
-
-                                            Protocol: oauth?.protocol_version,
-
+                                            "Composio Managed Auth":
+                                                comp?.managed_oauth_available === true
+                                                    ? "Verified in Catalog"
+                                                    : comp?.managed_oauth_available === false
+                                                      ? "Custom App Required"
+                                                      : "Unverified",
+                                            "Research status": r?.status || (guide ? "Baseline Seed Guide" : undefined),
+                                            "Protocol version": oauth?.protocol_version,
                                             "Grant types": oauth?.grant_types,
-
                                             Confidence:
-
                                                 oauth?.confidence ||
-
-                                                r?.confidence,
-
+                                                r?.confidence ||
+                                                (guide ? "OFFICIAL_DOCS (Curated Baseline)" : undefined),
                                         }}
-
                                     />
 
                                     {r?.error_message && (
-
                                         <p className="message">
-
                                             {r.error_message}
-
                                         </p>
-
                                     )}
 
-                                    <p className="muted">
-
-                                        {!r
-
-                                            ? "Technical capabilities remain unverified until detailed research returns evidence."
-
-                                            : r.status === "PARTIAL"
-
-                                              ? "Partial research. Missing fields remain unverified."
-
-                                              : r.status === "METADATA_ONLY"
-
-                                                ? "Metadata only. Provider-specific requirements may be unverified."
-
-                                                : ""}
-
+                                    <p className="muted" style={{ marginTop: 12, fontSize: 12 }}>
+                                        {comp?.managed_oauth_available === true
+                                            ? "Composio Managed OAuth is verified via the live toolkit catalog (ready for direct connection above). Detailed provider RFC technical parameters (protocol version, grant types, token endpoints) remain unverified without explicit documentation research."
+                                            : !r
+                                              ? "Technical provider parameters remain unverified until detailed research returns official documentation evidence."
+                                              : r.status === "PARTIAL"
+                                                ? "Partial research completed. Missing fields remain unverified without documentation evidence."
+                                                : r.status === "METADATA_ONLY"
+                                                  ? "Metadata only. Provider-specific RFC requirements remain unverified."
+                                                  : ""}
                                     </p>
 
                                 </Panel>
