@@ -26,28 +26,32 @@ Connecting autonomous AI agents to third-party tools (such as Slack, GitHub, Gma
 OAuth Navigator is built as a decoupled, modular full-stack application:
 
 ```
-┌────────────────────────────────────────────────────────┐
-│                   OAuth Navigator                      │
-│      React 18 + TypeScript + Vite + Tailwind CSS       │
-│           (Preserved Framer Design System)             │
-│        Production: https://oauthnavigator.vercel.app    │
-│           Local Dev: http://127.0.0.1:3000             │
-└──────────────────────────┬─────────────────────────────┘
-                           │ 1. First-Party API Proxy (/api/v1)
-                           │    HttpOnly Secure SameSite Cookies
-                           ▼
-┌────────────────────────────────────────────────────────┐
-│                   FastAPI Backend                      │
-│            Python 3.12 + Pydantic v2 + Uvicorn         │
-│     Production: https://oauth-navigator-api.onrender.com│
-│           Local Dev: http://127.0.0.1:8000             │
-├──────────────────────────┬─────────────────────────────┤
-│   Deterministic Evidence │      Composio Integration   │
-│   & Documentation Engine │     Toolkit & OAuth Catalog │
-├──────────────────────────┼─────────────────────────────┤
-│ Session Integrity (HMAC) │ Real OAuth Connection Engine│
-│ Multi-Tenant Isolation   │ Lifecycle State Machine     │
-└──────────────────────────┴─────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                          OAuth Navigator                               │
+│            React 18 + TypeScript + Vite + Tailwind CSS                 │
+│                 (Preserved Framer Design System)                       │
+│              Production: https://oauthnavigator.vercel.app             │
+│                 Local Dev: http://127.0.0.1:3000                       │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ 1. First-Party API Proxy (/api/v1)
+                                    │    HttpOnly Secure SameSite Cookies (oauth_nav_session)
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                          FastAPI Backend                               │
+│                  Python 3.12 + Pydantic v2 + Uvicorn                   │
+│           Production: https://oauth-navigator-api.onrender.com         │
+│                 Local Dev: http://127.0.0.1:8000                       │
+├───────────────────────────────────┬────────────────────────────────────┤
+│    Deterministic Evidence Engine  │       Composio Integration        │
+│    • Live toolkit inspection      │       • Managed OAuth catalog      │
+│    • SLA & review gate extraction │       • Custom app credentials     │
+├───────────────────────────────────┼────────────────────────────────────┤
+│    Cryptographic Session Layer    │   OAuth Connection Lifecycle       │
+│    • Server-issued anon identity  │   • Creation: POST /start          │
+│    • HMAC-SHA256 signature check  │   • Verification: GET /{id}        │
+│    • Multi-tenant ownership gate  │   • Testing: Live active check     │
+│    • Zero browser secrets stored  │   • Teardown: DELETE /{id}         │
+└───────────────────────────────────┴────────────────────────────────────┘
 ```
 
 - **Frontend (`/frontend`):** Built with React 18, TypeScript, and Vite. A desktop-first reconstruction preserving the original Framer design system (typography: `Unbounded` display headers, `Poppins` body, custom neo-brutalist borders, tactile pill badges, procedural SVGs, and interactive architecture diagrams). Configured with a first-party reverse proxy via Vercel rewrites (`/api/:path*`) to preserve session cookies in Incognito mode.
@@ -56,7 +60,7 @@ OAuth Navigator is built as a decoupled, modular full-stack application:
 
 ### Comprehensive Implemented & Verified API Endpoints
 
-| Category | Endpoint | HTTP Method | Description |
+| Category | Endpoint | HTTP Method | Lifecycle Role & Description |
 |---|---|---|---|
 | **System** | `/healthz` | `GET` | Root system health and uptime status. |
 | **System** | `/api/v1/health` | `GET` | API v1 service health status and timestamp. |
@@ -68,11 +72,11 @@ OAuth Navigator is built as a decoupled, modular full-stack application:
 | **Composio** | `/api/v1/composio/toolkit/{slug}` | `GET` | Live Composio toolkit catalog metadata inspection. |
 | **Sharing** | `/api/v1/guides/share` | `POST` | Generates a permanent shareable permalink for an existing guide. |
 | **Sharing** | `/api/v1/guides/share/{share_id}` | `GET` | Resolves and retrieves a shared guide by permalink ID. |
-| **Connections** | `/api/v1/connections/{slug}/start` | `POST` | Initializes a live Composio Connect Link bound to authenticated session identity. |
-| **Connections** | `/api/v1/connections/{id}` | `GET` | Real-time connection status query with strict multi-tenant ownership validation. |
-| **Connections** | `/api/v1/connections` | `GET` | Lists all connected accounts owned by the authenticated session. |
-| **Connections** | `/api/v1/connections/{id}` | `DELETE` | Disconnects and deletes a connected account with ownership verification. |
-| **Connections** | `/api/v1/connections/shopify/status` | `GET` | Returns Shopify Custom OAuth configuration status and setup instructions. |
+| **Connections** | `/api/v1/connections/{slug}/start` | `POST` | **Connection Creation:** Initializes a live Composio Connect Link bound to authenticated session identity. |
+| **Connections** | `/api/v1/connections/{id}` | `GET` | **Status Verification & Testing:** Real-time polling and active connection verification with strict session tenant ownership check. |
+| **Connections** | `/api/v1/connections` | `GET` | **Multi-Connection Listing:** Lists all connected accounts owned by the authenticated session across page reloads. |
+| **Connections** | `/api/v1/connections/{id}` | `DELETE` | **Disconnection & Teardown:** Disconnects and deletes a connected account with ownership verification. |
+| **Connections** | `/api/v1/connections/shopify/status` | `GET` | **Custom OAuth Status:** Returns Shopify Custom OAuth configuration readiness and dashboard instructions. |
 
 ### Clarification of Responsibilities (OAuth Navigator vs. Downstream Runtime)
 - **What OAuth Navigator does:**
@@ -385,9 +389,10 @@ In addition to pre-flight guidance, OAuth Navigator implements the **live, real-
 | `COMPOSIO_API_KEY` | Backend | Composio API key (`ak_...`) used server-side for metadata and connection links. |
 | `COMPOSIO_BASE_URL` | Backend | Composio API v3.1 root (default: `https://backend.composio.dev/api/v3.1`). |
 | `COMPOSIO_SHOPIFY_AUTH_CONFIG_ID` | Backend (Optional) | Custom OAuth config ID for Shopify if registered in Composio. |
+| `SESSION_SECRET_KEY` | Backend (Optional) | Custom secret key for HMAC-SHA256 session token signing (defaults to app-derived cryptographic salt). |
 | `ALLOWED_ORIGINS` | Backend | Comma-separated CORS origins (e.g. `https://oauthnavigator.vercel.app,http://localhost:3000`). |
-| `FRONTEND_BASE_URL` | Backend | Production frontend URL for shareable permalinks. |
-| `VITE_OAUTH_API_BASE_URL` | Frontend | Backend API root (`https://oauth-navigator-api.onrender.com/api/v1`). |
+| `FRONTEND_BASE_URL` | Backend | Production frontend URL for shareable permalinks (`https://oauthnavigator.vercel.app`). |
+| `VITE_OAUTH_API_BASE_URL` | Frontend | Backend API root (`/api/v1` in production via Vercel first-party proxy; `http://localhost:8000/api/v1` in local dev). |
 
 ### Local Setup (Development)
 ```bash
@@ -413,8 +418,8 @@ npm run dev # Starts Vite on http://localhost:5173 or :3000
    - Pre-flight guidance analyzes review policies and generates blueprints. The connection flow initiates real Composio connection links.
 2. **Ephemeral Storage on Render Free Tier:**
    - Free instances spin down after 15 minutes of inactivity; `seed_guides.json` persists permanently, while live-generated guides and shared IDs are reset on restart unless committed or backed by persistent storage.
-3. **Demo Session Identity:**
-   - Uses browser-generated UUID session tokens with ownership enforcement. In production, integrate enterprise SSO or Auth0.
+3. **Server-Issued Anonymous Session Identity:**
+   - Implements zero-login server-issued anonymous session IDs (`anon_<token>`) cryptographically signed via HMAC-SHA256 (`oauth_nav_session` HttpOnly cookie) with first-party proxying (`/api/v1`) and strict tenant isolation. In enterprise production deployments requiring cross-device persistence or team management, this can seamlessly transition to Auth0, WorkOS, or enterprise OIDC.
 
 ---
 
