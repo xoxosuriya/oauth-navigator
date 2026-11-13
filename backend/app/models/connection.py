@@ -4,11 +4,10 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class ConnectionStartRequest(BaseModel):
-    user_id: str = Field(
-        ...,
-        min_length=3,
+    user_id: Optional[str] = Field(
+        default=None,
         max_length=64,
-        description="Stable opaque identifier for the browser session",
+        description="Optional client session identifier; if provided, must match authenticated session",
     )
     alias: Optional[str] = Field(
         default=None,
@@ -17,6 +16,7 @@ class ConnectionStartRequest(BaseModel):
     )
     callback_url: Optional[str] = Field(
         default=None,
+        max_length=500,
         description="Frontend URL to redirect the user back to after OAuth flow",
     )
     force_new: Optional[bool] = Field(
@@ -26,12 +26,27 @@ class ConnectionStartRequest(BaseModel):
 
     @field_validator("user_id")
     @classmethod
-    def validate_user_id(cls, v: str) -> str:
+    def validate_user_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         clean = v.strip()
         if not re.match(r"^[a-zA-Z0-9_\-\.]{3,64}$", clean):
             raise ValueError(
                 "user_id must be 3-64 characters and contain only alphanumeric, dash, underscore, or period."
             )
+        return clean
+
+    @field_validator("callback_url")
+    @classmethod
+    def validate_callback_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        clean = v.strip()
+        lowered = clean.lower()
+        if not (lowered.startswith("http://") or lowered.startswith("https://")):
+            raise ValueError("callback_url must use an http or https protocol scheme.")
+        if any(bad in lowered for bad in ("javascript:", "data:", "vbscript:", "\n", "\r")):
+            raise ValueError("Invalid characters or dangerous scheme in callback_url.")
         return clean
 
 

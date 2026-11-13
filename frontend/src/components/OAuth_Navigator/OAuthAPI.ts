@@ -32,6 +32,14 @@ export class APIError extends Error {
 
 }
 
+export function isSafeExternalUrl(url: string): boolean {
+    if (!url || typeof url !== "string") return false
+    const trimmed = url.trim().toLowerCase()
+    return (trimmed.startsWith("https://") || trimmed.startsWith("http://")) &&
+        !trimmed.includes("javascript:") &&
+        !trimmed.includes("data:")
+}
+
 export function getSessionUserId(): string {
     if (typeof window === "undefined") return "usr_demo_session"
     try {
@@ -60,31 +68,34 @@ export function service(base?: string) {
 
         const timer = setTimeout(abort, 120000)
 
+        const sessionToken = typeof window !== "undefined" ? localStorage.getItem("oauth_nav_session_token") : null
+
         try {
+
+            const headers: Record<string, string> = {
+                Accept: "application/json",
+                ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+                ...(sessionToken ? { "X-Session-Token": sessionToken } : {}),
+            }
 
             const res = await fetch(root + path, {
 
                 method: body === undefined ? "GET" : "POST",
 
-                headers:
+                headers,
 
-                    body === undefined
-
-                        ? { Accept: "application/json" }
-
-                        : {
-
-                              Accept: "application/json",
-
-                              "Content-Type": "application/json",
-
-                          },
+                credentials: "include",
 
                 body: body === undefined ? undefined : JSON.stringify(body),
 
                 signal: controller.signal,
 
             })
+
+            const newSessionToken = res.headers.get("X-Session-Token")
+            if (newSessionToken && typeof window !== "undefined") {
+                localStorage.setItem("oauth_nav_session_token", newSessionToken)
+            }
 
             const data = await res.json().catch(() => null)
 
@@ -133,6 +144,9 @@ export function service(base?: string) {
     }
 
     return {
+
+        session: (legacyId?: string, s?: AbortSignal) =>
+            request("/session" + (legacyId ? "?legacy_id=" + encodeURIComponent(legacyId) : ""), undefined, s),
 
         health: (s?: AbortSignal) => request("/health", undefined, s),
 

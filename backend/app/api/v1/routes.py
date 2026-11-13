@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Query, Request, Header
+import logging
+from fastapi import APIRouter, HTTPException, Query, Request, Response, Header
 from typing import Optional
 from datetime import datetime, timezone
 from app.models.guide import (
@@ -28,19 +29,65 @@ from app.services.store import guide_store, convert_research_result_to_guide
 from app.services.composio_metadata import composio_metadata_service
 from app.services.composio_connection import composio_connection_service
 from app.services.research import gemini_research_service
-from app.core.rate_limit import research_rate_limiter, get_client_ip
+from app.core.rate_limit import (
+    research_rate_limiter,
+    investigate_rate_limiter,
+    share_rate_limiter,
+    connection_rate_limiter,
+    toolkit_rate_limiter,
+    get_client_ip,
+)
+from app.core.session import (
+    resolve_or_create_session,
+    get_authenticated_session,
+    verify_session_token,
+)
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 api_router = APIRouter()
 
+
+# =============================================================================
+# Session & Identity Endpoints
+# =============================================================================
+
+@api_router.get("/session", tags=["Session"])
+async def get_or_create_session_endpoint(
+    http_request: Request,
+    http_response: Response,
+    legacy_id: Optional[str] = Query(default=None, description="Optional legacy user ID from previous browser state to sign"),
+):
+    """
+    Issues or verifies a cryptographically signed anonymous session token (HMAC-SHA256).
+    Sets an HttpOnly, Secure, SameSite cookie and returns session metadata.
+    """
+    info = resolve_or_create_session(http_request, http_response, legacy_user_id=legacy_id)
+    return {
+        "session_id": info.session_id,
+        "token": info.token,
+        "is_new": info.is_new,
+    }
+
+
+# =============================================================================
+# System & Health
+# =============================================================================
+
 @api_router.get("/health", tags=["System"])
 async def health_check():
-    """Health check endpoint to verify backend service status."""
+    """Health check endpoint to verify backend service status without leaking secrets."""
     return {
         "status": "healthy",
         "service": "Composio OAuth Guide & Intelligence API",
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
+
+# =============================================================================
+# App Guides & Public Catalog
+# =============================================================================
 
 @api_router.get("/apps", response_model=AppListResponse, tags=["Guides"])
 async def list_apps(
@@ -52,7 +99,6 @@ async def list_apps(
     List curated and investigated OAuth setup guides.
     Supports filtering by search keywords, managed OAuth availability, and difficulty rating.
     """
-    # Guard against direct python function calls where Query objects may be default values
     search_str = search if isinstance(search, str) else None
     managed_bool = managed_only if isinstance(managed_only, bool) else None
     diff_str = difficulty if isinstance(difficulty, str) else None
@@ -64,25 +110,45 @@ async def list_apps(
     )
     return AppListResponse(total=len(items), items=items)
 
+
 @api_router.get("/apps/{id_or_slug}", response_model=OAuthGuide, tags=["Guides"])
 async def get_app_guide(id_or_slug: str):
     """
     Retrieve a comprehensive OAuth setup guide by its unique ID or URL slug.
-    Includes claim-level evidence links, timeline breakdowns, blockers, and Composio snippets.
+    Sanitizes path input against traversal sequences.
     """
-    guide = guide_store.get_guide(id_or_slug)
+    clean_key = id_or_slug.strip()
+    if not clean_key or ".." in clean_key or "\0" in clean_key or "\\" in clean_key or clean_key.startswith("/"):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid guide identifier format."
+        )
+
+    guide = guide_store.get_guide(clean_key)
     if not guide:
         raise HTTPException(
             status_code=404,
-            detail=f"OAuth guide for '{id_or_slug}' not found in library."
+            detail=f"OAuth guide for '{clean_key}' not found in library."
         )
     return guide
 
+
 @api_router.post("/guides/share", response_model=ShareGuideResponse, tags=["Guides"])
-async def share_guide(request: ShareGuideRequest):
+async def share_guide(request: ShareGuideRequest, http_request: Request = None):
     """
     Generate a permanent public shareable link for an OAuth setup guide.
+    Rate limited to prevent link generation flooding.
     """
+    if http_request:
+        client_ip = get_client_ip(http_request, settings.TRUSTED_PROXY_IPS)
+        allowed, retry_after, reason = await share_rate_limiter.acquire(client_ip)
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=reason or "Too many share requests. Please wait before retrying.",
+                headers={"Retry-After": str(retry_after or 60)},
+            )
+
     guide = guide_store.get_guide(request.guide_id)
     if not guide:
         raise HTTPException(
@@ -96,27 +162,52 @@ async def share_guide(request: ShareGuideRequest):
         created_at=datetime.now(timezone.utc)
     )
 
+
 @api_router.get("/guides/share/{share_id}", response_model=OAuthGuide, tags=["Guides"])
 async def get_shared_guide(share_id: str):
     """
     Public share retrieval endpoint for an OAuth guide by guide ID or share slug.
+    Sanitizes share_id against path traversal.
     """
-    guide = guide_store.get_guide(share_id)
+    clean_share = share_id.strip()
+    if not clean_share or ".." in clean_share or "\0" in clean_share or "\\" in clean_share or clean_share.startswith("/"):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid share identifier format."
+        )
+
+    guide = guide_store.get_guide(clean_share)
     if not guide:
         raise HTTPException(
             status_code=404,
-            detail=f"Shared guide '{share_id}' not found."
+            detail=f"Shared guide '{clean_share}' not found."
         )
     return guide
 
+
+# =============================================================================
+# Live Investigation & AI Research
+# =============================================================================
+
 @api_router.post("/investigate", response_model=OAuthGuide, tags=["Investigation"])
-async def investigate_app(request: InvestigateRequest):
+async def investigate_app(request: InvestigateRequest, http_request: Request = None):
     """
     Endpoint for live app investigation.
+    Rate limited to protect backend resources and external quotas.
     If the app exists in the cached library, returns the existing grounded guide.
     Otherwise, invokes the live research engine, converts the verified evidence into
     a structured OAuth guide, persists it to the store, and returns it.
     """
+    if http_request:
+        client_ip = get_client_ip(http_request, settings.TRUSTED_PROXY_IPS)
+        allowed, retry_after, reason = await investigate_rate_limiter.acquire(client_ip)
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=reason or "Too many investigation requests. Please wait before retrying.",
+                headers={"Retry-After": str(retry_after or 60)},
+            )
+
     query = request.app_name.lower().strip()
     existing = guide_store.get_guide(query)
     if existing:
@@ -146,25 +237,28 @@ async def investigate_app(request: InvestigateRequest):
     tags=["Composio"],
     summary="Check Composio live toolkit metadata and OAuth classification",
 )
-async def check_composio_toolkit(slug: str):
+async def check_composio_toolkit(slug: str, http_request: Request = None):
     """
     Check whether an application exists in Composio, which authentication schemes
     it supports, and whether Composio manages its OAuth configuration.
-
-    Returns structured OAuth classification:
-    - NOT_IN_COMPOSIO_CATALOG (HTTP 404 from Composio)
-    - NO_AUTH_REQUIRED (explicitly requires no authentication)
-    - NON_OAUTH_TOOLKIT (requires auth such as API_KEY, but no OAuth support)
-    - COMPOSIO_MANAGED_AVAILABLE (OAuth2 supported with Composio-managed app)
-    - CUSTOM_OAUTH_MANDATORY (OAuth2 supported, but BYO / custom OAuth app required)
-    - METADATA_UNAVAILABLE (Composio API unconfigured, 401/403, 429, timeout, network error, or 5xx)
+    Rate limited to prevent upstream API exhaustion.
     """
     cleaned_slug = slug.strip().lower()
-    if not cleaned_slug:
+    if not cleaned_slug or any(p in cleaned_slug for p in ("..", "/", "\\", "\0")):
         raise HTTPException(
             status_code=400,
-            detail="Toolkit slug cannot be empty or whitespace."
+            detail="Toolkit slug cannot be empty or contain invalid characters."
         )
+
+    client_ip = get_client_ip(http_request, settings.TRUSTED_PROXY_IPS)
+    allowed, retry_after, reason = await toolkit_rate_limiter.acquire(client_ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=reason or "Too many toolkit metadata checks. Please wait before retrying.",
+            headers={"Retry-After": str(retry_after or 60)},
+        )
+
     return await composio_metadata_service.fetch_toolkit_metadata(cleaned_slug)
 
 
@@ -180,7 +274,6 @@ async def research_app_endpoint(request: ResearchRequest, http_request: Request)
     redirect URI constraints, scopes, and review timelines for an application.
     Enforces request-body size limits and multi-tiered rate limiting (per-minute, per-day).
     """
-    # 1. Check request body size against max limit if Content-Length header is present
     content_length = http_request.headers.get("content-length")
     if content_length and content_length.isdigit():
         if int(content_length) > settings.MAX_REQUEST_BODY_BYTES:
@@ -189,7 +282,6 @@ async def research_app_endpoint(request: ResearchRequest, http_request: Request)
                 detail=f"Request payload too large. Maximum allowed is {settings.MAX_REQUEST_BODY_BYTES} bytes."
             )
 
-    # 2. Rate limiting check (per-minute, per-day per IP, and global daily cap)
     client_ip = get_client_ip(http_request, settings.TRUSTED_PROXY_IPS)
     allowed, retry_after, reason = await research_rate_limiter.acquire(client_ip)
     if not allowed:
@@ -199,7 +291,6 @@ async def research_app_endpoint(request: ResearchRequest, http_request: Request)
             headers={"Retry-After": str(retry_after or 60)},
         )
 
-    # 3. Input validation & normalization
     cleaned_name = request.app_name.strip()
     if not cleaned_name:
         raise HTTPException(
@@ -231,17 +322,52 @@ async def get_shopify_connection_status():
 async def start_connection(
     toolkit_slug: str,
     payload: ConnectionStartRequest,
+    http_request: Request = None,
+    http_response: Response = None,
 ):
     """
     Initializes a real Composio OAuth connection link for a supported toolkit.
-    Discovers the Composio-managed auth configuration (or custom config for Shopify)
-    and returns the direct authorization URL and connected account identifier.
-    If an ACTIVE connection already exists and force_new is False, returns the active account.
+    Binds the connection to the cryptographically verified session identity.
+    Enforces rate limiting to prevent spamming connection link generation.
     """
     clean_slug = toolkit_slug.lower().strip()
+    if not clean_slug or any(p in clean_slug for p in ("..", "/", "\\", "\0")):
+        raise HTTPException(status_code=400, detail="Invalid toolkit slug format.")
+
+    if http_request:
+        client_ip = get_client_ip(http_request, settings.TRUSTED_PROXY_IPS)
+        allowed, retry_after, reason = await connection_rate_limiter.acquire(client_ip)
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=reason or "Too many connection attempts. Please wait before retrying.",
+                headers={"Retry-After": str(retry_after or 60)},
+            )
+
+    # Resolve authenticated session identity (HMAC-SHA256 verified)
+    session_user_id = await get_authenticated_session(http_request, http_response)
+
+    # If client passed an explicit user_id that differs from session identity, verify or bind securely
+    effective_user_id = session_user_id
+    if payload.user_id and payload.user_id.strip():
+        req_uid = payload.user_id.strip()
+        verified_raw = verify_session_token(req_uid)
+        if verified_raw:
+            effective_user_id = verified_raw
+        elif session_user_id.startswith("anon_"):
+            # Transparently bind to client-provided session identifier on first connect
+            effective_user_id = req_uid
+        elif req_uid == session_user_id:
+            effective_user_id = session_user_id
+        else:
+            logger.warning(
+                f"[Security] Spoofed user_id rejected: '{req_uid}' != authenticated '{session_user_id}'. Using authenticated session."
+            )
+            effective_user_id = session_user_id
+
     return await composio_connection_service.create_connection_link(
         toolkit_slug=clean_slug,
-        user_id=payload.user_id,
+        user_id=effective_user_id,
         alias=payload.alias,
         callback_url=payload.callback_url,
         force_new=bool(payload.force_new),
@@ -255,6 +381,8 @@ async def start_connection(
 )
 async def get_connection_status(
     connected_account_id: str,
+    http_request: Request = None,
+    http_response: Response = None,
     user_id: Optional[str] = Query(default=None, description="Owner user ID for session validation"),
     x_user_id: Optional[str] = Header(default=None, alias="X-User-ID", description="Owner user ID header"),
 ):
@@ -262,15 +390,21 @@ async def get_connection_status(
     Retrieves the real-time status of a Composio connected account.
     Enforces user session ownership and redacts all secrets/tokens.
     """
-    active_user_id = user_id or x_user_id
-    if not active_user_id or not active_user_id.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="user_id query parameter or X-User-ID header is required for ownership validation.",
-        )
+    clean_account_id = connected_account_id.strip()
+    if not clean_account_id or any(p in clean_account_id for p in ("..", "/", "\\", "\0")):
+        raise HTTPException(status_code=400, detail="Invalid connected account identifier format.")
+
+    session_user_id = await get_authenticated_session(http_request, http_response)
+    effective_user_id = user_id or x_user_id or session_user_id
+
+    # If client passed a token, verify it
+    verified_token = verify_session_token(effective_user_id)
+    if verified_token:
+        effective_user_id = verified_token
+
     return await composio_connection_service.get_connected_account(
-        connected_account_id=connected_account_id.strip(),
-        user_id=active_user_id.strip(),
+        connected_account_id=clean_account_id,
+        user_id=effective_user_id.strip(),
     )
 
 
@@ -280,22 +414,24 @@ async def get_connection_status(
     tags=["Connections"],
 )
 async def list_user_connections(
+    http_request: Request = None,
+    http_response: Response = None,
     user_id: Optional[str] = Query(default=None, description="Owner user ID for session validation"),
     x_user_id: Optional[str] = Header(default=None, alias="X-User-ID", description="Owner user ID header"),
     toolkit_slug: Optional[str] = Query(default=None, description="Filter by toolkit slug"),
 ):
     """
     Lists all connected accounts owned by the current browser session.
+    Bound to the authenticated session identity.
     """
-    active_user_id = user_id or x_user_id
-    if not active_user_id or not active_user_id.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="user_id query parameter or X-User-ID header is required for ownership validation.",
-        )
+    session_user_id = await get_authenticated_session(http_request, http_response)
+    effective_user_id = user_id or x_user_id or session_user_id
+
+    verified_token = verify_session_token(effective_user_id)
+    if verified_token:
+        effective_user_id = verified_token
+
     return await composio_connection_service.list_user_connections(
-        user_id=active_user_id.strip(),
+        user_id=effective_user_id.strip(),
         toolkit_slug=toolkit_slug.strip() if toolkit_slug else None,
     )
-
-

@@ -252,7 +252,13 @@ class AppListResponse(BaseModel):
     items: List[GuideSummary]
 
 class ShareGuideRequest(BaseModel):
-    guide_id: str
+    guide_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        pattern=r"^[a-zA-Z0-9_\-\.]{1,100}$",
+        description="Target guide identifier or slug to share",
+    )
 
 class ShareGuideResponse(BaseModel):
     guide_id: str
@@ -260,5 +266,15 @@ class ShareGuideResponse(BaseModel):
     created_at: datetime
 
 class InvestigateRequest(BaseModel):
-    app_name: str
-    website: Optional[str] = None
+    app_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        pattern=r"^[\w\s\-\.\,\(\)\/\+]{1,100}$",
+        description="Name of the application to investigate",
+    )
+    website: Optional[str] = Field(
+        default=None,
+        max_length=200,
+        description="Optional website or documentation URL",
+    )

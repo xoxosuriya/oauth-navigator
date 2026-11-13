@@ -201,7 +201,57 @@ class GeminiQuotaProtection:
             self._daily_calls.clear()
 
 
+class EndpointRateLimiter:
+    """
+    Sliding-window rate limiter for public endpoints (Investigate, Share, Connection, Toolkit).
+    Provides process-local abuse prevention with per-minute and per-day caps.
+    """
+
+    def __init__(self, name: str, per_minute_per_ip: int = 10, per_day_per_ip: int = 100):
+        self.name = name
+        self.per_minute_per_ip = per_minute_per_ip
+        self.per_day_per_ip = per_day_per_ip
+        self._ip_minute: Dict[str, List[float]] = {}
+        self._ip_day: Dict[str, List[float]] = {}
+        self._lock = asyncio.Lock()
+
+    def _prune(self, timestamps: List[float], cutoff: float) -> List[float]:
+        return [t for t in timestamps if t > cutoff]
+
+    async def acquire(self, client_ip: str) -> Tuple[bool, Optional[int], Optional[str]]:
+        async with self._lock:
+            now = time.time()
+            one_min_ago = now - 60.0
+            one_day_ago = now - 86400.0
+
+            ip_min = self._prune(self._ip_minute.get(client_ip, []), one_min_ago)
+            self._ip_minute[client_ip] = ip_min
+            if len(ip_min) >= self.per_minute_per_ip:
+                retry_after = max(1, int(60.0 - (now - ip_min[0])))
+                return False, retry_after, f"Too many {self.name} requests. Rate limit is {self.per_minute_per_ip} per minute."
+
+            ip_day = self._prune(self._ip_day.get(client_ip, []), one_day_ago)
+            self._ip_day[client_ip] = ip_day
+            if len(ip_day) >= self.per_day_per_ip:
+                retry_after = max(1, int(86400.0 - (now - ip_day[0])))
+                return False, retry_after, f"Daily limit exceeded for {self.name}. Quota is {self.per_day_per_ip} per day."
+
+            ip_min.append(now)
+            ip_day.append(now)
+            return True, None, None
+
+    async def reset(self) -> None:
+        async with self._lock:
+            self._ip_minute.clear()
+            self._ip_day.clear()
+
+
 # Global singleton instances
 research_rate_limiter = ResearchRateLimiter()
 gemini_quota_protection = GeminiQuotaProtection()
+
+investigate_rate_limiter = EndpointRateLimiter(name="investigate", per_minute_per_ip=10, per_day_per_ip=60)
+share_rate_limiter = EndpointRateLimiter(name="share", per_minute_per_ip=15, per_day_per_ip=100)
+connection_rate_limiter = EndpointRateLimiter(name="connection", per_minute_per_ip=10, per_day_per_ip=50)
+toolkit_rate_limiter = EndpointRateLimiter(name="toolkit", per_minute_per_ip=30, per_day_per_ip=300)
 

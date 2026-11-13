@@ -6,7 +6,7 @@ import { Section, Icon, IconTile, Reveal, T } from "../Kit.tsx"
 
 import { OAuthDiagram } from "./OAuthDiagram.tsx"
 
-import { service, resolveBase, getSessionUserId } from "./OAuthAPI.ts"
+import { service, resolveBase, getSessionUserId, isSafeExternalUrl } from "./OAuthAPI.ts"
 
 interface Props {
 
@@ -420,6 +420,9 @@ export default function OAuthWorkspace({
 
     React.useEffect(() => {
         if (typeof window === "undefined" || embedded) return
+        // Initialize or synchronize cryptographically signed session on mount
+        client.session(userId).catch(() => {})
+
         const params = new URLSearchParams(window.location.search)
         const connParam = params.get("connection_id") || params.get("connected_account_id")
         const storedPending = sessionStorage.getItem("oauth_nav_pending_account_id")
@@ -427,7 +430,12 @@ export default function OAuthWorkspace({
         if (targetId) {
             startPolling(targetId)
         }
-    }, [embedded, startPolling])
+        // Clear sensitive query params from browser URL after reading
+        if (connParam && window.history && window.history.replaceState) {
+            const cleanUrl = window.location.origin + window.location.pathname
+            window.history.replaceState({}, document.title, cleanUrl)
+        }
+    }, [embedded, startPolling, userId, client])
 
     // Synchronize connection status whenever active guide changes
     React.useEffect(() => {
@@ -486,7 +494,7 @@ export default function OAuthWorkspace({
                 return
             }
 
-            if (res && res.redirect_url) {
+            if (res && res.redirect_url && isSafeExternalUrl(res.redirect_url)) {
                 setConnectionRedirectUrl(res.redirect_url)
                 setPendingAccountId(res.connected_account_id)
                 setConnection({
@@ -504,7 +512,7 @@ export default function OAuthWorkspace({
                     sessionStorage.setItem("oauth_nav_pending_slug", slug)
                 }
                 startPolling(res.connected_account_id)
-                const authWindow = window.open(res.redirect_url, "_blank")
+                const authWindow = window.open(res.redirect_url, "_blank", "noopener,noreferrer")
                 if (!authWindow || authWindow.closed || typeof authWindow.closed === "undefined") {
                     window.location.href = res.redirect_url
                 }
