@@ -138,5 +138,16 @@ describe("OAuth Flow Corrections — Issue 1 & Issue 2 Verification", () => {
         // Must resolve to relative /api/v1 to leverage Vercel first-party proxy rewrites
         assert.equal(base, "/api/v1")
     })
+
+    test("6. Footer Branding: 5 personal social, portfolio, and Gmail links configured", async () => {
+        const fs = await import("node:fs")
+        const path = await import("node:path")
+        const footerCode = fs.readFileSync(path.resolve("src/components/Footer.tsx"), "utf-8")
+        assert.ok(footerCode.includes("https://www.linkedin.com/in/suriya-prakash-28a5273ba"))
+        assert.ok(footerCode.includes("https://www.instagram.com/xoxo.suriya/"))
+        assert.ok(footerCode.includes("https://github.com/xoxosuriya"))
+        assert.ok(footerCode.includes("https://xoxosuriya.github.io/suriya_portfolio/"))
+        assert.ok(footerCode.includes("https://mail.google.com/mail/?view=cm&fs=1&to=sp2742006@gmail.com"))
+    })
 })
 

@@ -32,7 +32,7 @@ Documentation | /resources`}
                 col2Title="LEARN"
                 col2Links={`Documentation | /resources\nAbout OAuth Navigator | /about\nSolutions | /solutions\nContact | /contact`}
                 copyright="© 2026 OAuth Navigator."
-                socials={`linkedin | https://www.linkedin.com/\ninstagram | https://www.instagram.com/\ngithub | https://github.com/`}
+                socials={`linkedin | https://www.linkedin.com/in/suriya-prakash-28a5273ba\ninstagram | https://www.instagram.com/xoxo.suriya/\ngithub | https://github.com/xoxosuriya\nportfolio | https://xoxosuriya.github.io/suriya_portfolio/\ngmail | https://mail.google.com/mail/?view=cm&fs=1&to=sp2742006@gmail.com`}
             />
         </div>
     )

@@ -50,11 +50,25 @@ const CSS = `
 
 .sv-foot .desc{font-size:15px;line-height:1.55;color:var(--body)}
 
-.sv-foot .soc{display:flex;gap:10px;margin-top:4px}
+.sv-foot .soc{display:flex;flex-wrap:wrap;gap:14px 16px;margin-top:8px;align-items:flex-start}
 
-.sv-foot .soc a{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;background:${T.white};border:1.2px solid ${T.ink};color:${T.ink};box-shadow:2px 2px 0 0 ${T.ink};transition:translate .2s var(--pop),box-shadow .2s var(--pop)}
+.sv-foot .soc a{color:${T.ink};text-decoration:none}
 
-.sv-foot .soc a:hover{translate:-2px -2px;box-shadow:4px 4px 0 0 ${T.ink}}
+.sv-foot .soc a.soc-item{display:flex;flex-direction:column;align-items:center;gap:6px;text-decoration:none;color:${T.ink};outline:none;transition:transform .2s var(--pop)}
+
+.sv-foot .soc-circle{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;background:${T.white};border:1.4px solid ${T.ink};color:${T.ink};box-shadow:2px 2px 0 0 ${T.ink};transition:translate .2s var(--pop),box-shadow .2s var(--pop),background-color .2s}
+
+.sv-foot .soc a.soc-item:hover .soc-circle{translate:-2px -2px;box-shadow:4px 4px 0 0 ${T.ink};background:${T.butter}}
+
+.sv-foot .soc a.soc-item:focus-visible .soc-circle{outline:2px solid ${T.ink};outline-offset:3px}
+
+.sv-foot .soc-label{font-family:var(--display);font-weight:700;font-size:9.5px;line-height:1;letter-spacing:.05em;text-transform:uppercase;color:var(--text);user-select:none;text-align:center;transition:color .2s}
+
+.sv-foot .soc a.soc-item:hover .soc-label{color:${T.ink};text-decoration:underline}
+
+@keyframes svOrbitPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.25);opacity:.75}}
+
+.sv-foot-orbit-dot{transform-origin:19.5px 8px;animation:svOrbitPulse 2.4s ease-in-out infinite}
 
 .sv-foot h3{font-family:var(--display);font-weight:600;font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:var(--text);margin-bottom:18px}
 
@@ -92,11 +106,197 @@ const parse = (s: string) =>
 
     })
 
+export const DEFAULT_SOCIALS = `linkedin | https://www.linkedin.com/in/suriya-prakash-28a5273ba
+instagram | https://www.instagram.com/xoxo.suriya/
+github | https://github.com/xoxosuriya
+portfolio | https://xoxosuriya.github.io/suriya_portfolio/
+gmail | https://mail.google.com/mail/?view=cm&fs=1&to=sp2742006@gmail.com`
+
 const SOC: Record<string, string> = {
     linkedin: "linkedin",
     instagram: "instagram",
     github: "github",
+    portfolio: "portfolio",
+    gmail: "gmail",
     youtube: "youtube",
+    x: "x_social",
+}
+
+const SOC_META: Record<string, { label: string; title: string }> = {
+    linkedin: {
+        label: "LINKEDIN",
+        title: "LinkedIn — Suriya Prakash (opens in new tab)",
+    },
+    instagram: {
+        label: "INSTAGRAM",
+        title: "Instagram — @xoxo.suriya (opens in new tab)",
+    },
+    github: {
+        label: "GITHUB",
+        title: "GitHub — xoxosuriya (opens in new tab)",
+    },
+    portfolio: {
+        label: "PORTFOLIO",
+        title: "Personal Portfolio — Suriya Prakash (opens in new tab)",
+    },
+    gmail: {
+        label: "GMAIL",
+        title: "Gmail — Compose message to sp2742006@gmail.com (opens in new tab)",
+    },
+}
+
+export function LinkedInLogo({ size = 18 }: { size?: number }) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.8}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            focusable="false"
+        >
+            <path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-4 0v7h-4v-7a6 6 0 0 1 6-6z" />
+            <rect width="4" height="12" x="2" y="9" />
+            <circle cx="4" cy="4" r="2" />
+        </svg>
+    )
+}
+
+export function InstagramLogo({ size = 18 }: { size?: number }) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.8}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            focusable="false"
+        >
+            <rect width="20" height="20" x="2" y="2" rx="5" ry="5" />
+            <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+            <line x1="17.5" x2="17.51" y1="6.5" y2="6.5" />
+        </svg>
+    )
+}
+
+export function GitHubLogo({ size = 18 }: { size?: number }) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.8}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            focusable="false"
+        >
+            <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+            <path d="M9 18c-4.51 2-5-2-7-2" />
+        </svg>
+    )
+}
+
+export function PortfolioLogo({ size = 19 }: { size?: number }) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.75}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            focusable="false"
+            className="sv-foot-portfolio-svg"
+        >
+            <circle cx="12" cy="12" r="5" />
+            <ellipse cx="12" cy="12" rx="2.4" ry="5" strokeWidth={1.2} />
+            <line x1="7" y1="12" x2="17" y2="12" strokeWidth={1.2} />
+            <ellipse
+                cx="12"
+                cy="12"
+                rx="9.5"
+                ry="4"
+                transform="rotate(-26 12 12)"
+                strokeWidth={1.4}
+                strokeDasharray="26 3.5"
+            />
+            <circle
+                cx="19.5"
+                cy="8"
+                r="1.4"
+                fill="currentColor"
+                stroke="none"
+                className="sv-foot-orbit-dot"
+            />
+        </svg>
+    )
+}
+
+export function GmailLogo({ size = 19 }: { size?: number }) {
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+            focusable="false"
+            className="sv-foot-gmail-svg"
+        >
+            <path
+                d="M4 18.5V7.5C4 6.67 4.67 6 5.5 6H7v12.5H5.5A1.5 1.5 0 0 1 4 18.5z"
+                fill="#4285F4"
+            />
+            <path
+                d="M17 6h1.5A1.5 1.5 0 0 1 20 7.5v11a1.5 1.5 0 0 1-1.5 1.5H17V6z"
+                fill="#34A853"
+            />
+            <path
+                d="M17 5.25h1.5A1.5 1.5 0 0 1 20 6.75v1.75l-3-2.25V5.25z"
+                fill="#FBBC04"
+            />
+            <path
+                d="M4 6.75A1.5 1.5 0 0 1 5.5 5.25H7v2.75l-3 2.25V6.75z"
+                fill="#C5221F"
+            />
+            <path
+                d="M7 6.25L12 10l5-3.75v3.25L12 13.25 7 9.5V6.25z"
+                fill="#EA4335"
+            />
+        </svg>
+    )
+}
+
+export function renderSocialIcon(key: string, size = 18) {
+    const k = key.toLowerCase()
+    switch (k) {
+        case "linkedin":
+            return <LinkedInLogo size={size} />
+        case "instagram":
+            return <InstagramLogo size={size} />
+        case "github":
+            return <GitHubLogo size={size} />
+        case "portfolio":
+            return <PortfolioLogo size={size} />
+        case "gmail":
+            return <GmailLogo size={size} />
+        default:
+            return <Icon name={SOC[k] || "zap"} size={size} />
+    }
 }
 
 
@@ -159,7 +359,12 @@ export default function Footer(props: any) {
 
     ][]
 
-    const soc = parse(socials).filter((s) => SOC[s.label.toLowerCase()])
+    const socialsText =
+        typeof socials === "string" && socials.trim() !== ""
+            ? socials
+            : DEFAULT_SOCIALS
+
+    const soc = parse(socialsText).filter((s) => SOC[s.label.toLowerCase()])
 
     const legal = parse(legalLinks)
 
@@ -307,43 +512,59 @@ export default function Footer(props: any) {
 
                                 {soc.length > 0 && (
 
-                                    <div className="soc">
+                                    <div className="soc" role="list" aria-label="Social and contact links">
 
-                                        {soc.map((s, i) => (
+                                        {soc.map((s, i) => {
 
-                                            <a
+                                            const key = s.label.toLowerCase()
 
-                                                key={i}
+                                            const meta = SOC_META[key] || {
 
-                                                href={s.href}
+                                                label: s.label.toUpperCase(),
 
-                                                target="_blank"
+                                                title: `${s.label} — ${s.href}`,
 
-                                                rel="noopener noreferrer"
+                                            }
 
-                                                aria-label={s.label}
+                                            return (
 
-                                            >
+                                                <a
 
-                                                <Icon
+                                                    key={i}
 
-                                                    name={
+                                                    href={s.href}
 
-                                                        SOC[
+                                                    target="_blank"
 
-                                                            s.label.toLowerCase()
+                                                    rel="noopener noreferrer"
 
-                                                        ]
+                                                    className="soc-item"
 
-                                                    }
+                                                    aria-label={`${meta.label} - ${meta.title} (opens in a new tab)`}
 
-                                                    size={17}
+                                                    title={meta.title}
 
-                                                />
+                                                    role="listitem"
 
-                                            </a>
+                                                >
 
-                                        ))}
+                                                    <div className="soc-circle">
+
+                                                        {renderSocialIcon(key)}
+
+                                                    </div>
+
+                                                    <span className="soc-label">
+
+                                                        {meta.label}
+
+                                                    </span>
+
+                                                </a>
+
+                                            )
+
+                                        })}
 
                                     </div>
 
@@ -665,9 +886,9 @@ addPropertyControls(Footer, {
 
         description:
 
-            "One per line: linkedin | URL (also x, github, youtube). Leave empty to hide.",
+            "One per line: platform | URL (linkedin, instagram, github, portfolio, gmail).",
 
-        defaultValue: "linkedin | https://www.linkedin.com\nx | https://x.com",
+        defaultValue: DEFAULT_SOCIALS,
 
     },
 

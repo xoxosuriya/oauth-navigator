@@ -790,6 +790,12 @@ const P: Record<string, string> = {
 
         '<path d="M2.5 17a24.12 24.12 0 0 1 0-10 2 2 0 0 1 1.4-1.4 49.56 49.56 0 0 1 16.2 0A2 2 0 0 1 21.5 7a24.12 24.12 0 0 1 0 10 2 2 0 0 1-1.4 1.4 49.55 49.55 0 0 1-16.2 0A2 2 0 0 1 2.5 17"/><path d="m10 15 5-3-5-3z"/>',
 
+    portfolio:
+        '<circle cx="12" cy="12" r="5"/><ellipse cx="12" cy="12" rx="2.4" ry="5" stroke-width="1.2"/><line x1="7" y1="12" x2="17" y2="12" stroke-width="1.2"/><ellipse cx="12" cy="12" rx="9.5" ry="4" transform="rotate(-26 12 12)" stroke-width="1.4" stroke-dasharray="26 3.5"/><circle cx="19.5" cy="8" r="1.4" fill="currentColor" stroke="none"/>',
+
+    gmail:
+        '<path d="M4 18.5V7.5C4 6.67 4.67 6 5.5 6H7v12.5H5.5A1.5 1.5 0 0 1 4 18.5z" fill="#4285F4" stroke="none"/><path d="M17 6h1.5A1.5 1.5 0 0 1 20 7.5v11a1.5 1.5 0 0 1-1.5 1.5H17V6z" fill="#34A853" stroke="none"/><path d="M17 5.25h1.5A1.5 1.5 0 0 1 20 6.75v1.75l-3-2.25V5.25z" fill="#FBBC04" stroke="none"/><path d="M4 6.75A1.5 1.5 0 0 1 5.5 5.25H7v2.75l-3 2.25V6.75z" fill="#C5221F" stroke="none"/><path d="M7 6.25L12 10l5-3.75v3.25L12 13.25 7 9.5V6.25z" fill="#EA4335" stroke="none"/>',
+
 }
 
 export const ICON_NAMES = Object.keys(P).filter(
@@ -805,6 +811,12 @@ export const ICON_NAMES = Object.keys(P).filter(
             "github",
 
             "youtube",
+
+            "instagram",
+
+            "portfolio",
+
+            "gmail",
 
             "menu",
 

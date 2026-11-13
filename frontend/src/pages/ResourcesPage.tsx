@@ -73,9 +73,11 @@ Application workspace | /workspace`}
 About OAuth Navigator | /about
 Solutions | /solutions
 Contact | /contact`}
-                socials={`linkedin | https://www.linkedin.com/
-instagram | https://www.instagram.com/
-github | https://github.com/`}
+                socials={`linkedin | https://www.linkedin.com/in/suriya-prakash-28a5273ba
+instagram | https://www.instagram.com/xoxo.suriya/
+github | https://github.com/xoxosuriya
+portfolio | https://xoxosuriya.github.io/suriya_portfolio/
+gmail | https://mail.google.com/mail/?view=cm&fs=1&to=sp2742006@gmail.com`}
                 copyright="© 2026 OAuth Navigator."
                 variant="full"
             />
